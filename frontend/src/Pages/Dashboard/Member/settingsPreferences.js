@@ -1,7 +1,6 @@
 const STORAGE_KEY = "rs-sangha-settings";
 
 const DEFAULT_PREFERENCES = {
-  theme: "light",
   density: "comfortable",
   dateFormat: "DD/MM/YYYY",
 };
@@ -16,7 +15,6 @@ export function getSettingsPreferences() {
 }
 
 export function applySettingsPreferences(preferences = getSettingsPreferences()) {
-  document.documentElement.dataset.theme = preferences.theme;
   document.documentElement.dataset.density = preferences.density;
 }
 

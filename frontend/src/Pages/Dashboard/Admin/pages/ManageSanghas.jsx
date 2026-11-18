@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from "react";
+import { Info } from "lucide-react";
 import api from "../../../../api/axiosInstance"; // ⚠️ adjust to match this file's actual depth from src/
 import DataTable from "../../../../Common_Component/DataTable";
 import CreateSanghaModal from "../components/CreateSanghaModal";
+import SanghaInfoModal from "../components/SanghaInfoModal";
 import EditSanghaModal from "../../SuperAdmin/Modal/EditSanghaModal";
 import "./ManageSanghas.css";
 
@@ -12,6 +14,7 @@ export default function ManageSanghas() {
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
+  const [infoTarget, setInfoTarget] = useState(null);
 
   const [toast, setToast] = useState(null);
   const showToast = (message) => {
@@ -43,6 +46,9 @@ export default function ManageSanghas() {
 
   const handleOpenEditModal = (row) => setEditTarget(row);
   const handleCloseEditModal = () => setEditTarget(null);
+
+  const handleOpenInfoModal = (row) => setInfoTarget(row);
+  const handleCloseInfoModal = () => setInfoTarget(null);
 
   const handleChanged = () => {
     fetchSanghas();
@@ -94,9 +100,20 @@ export default function ManageSanghas() {
             fetching ? "Loading..." : search ? "No sanghas match your search" : "No records found"
           }
           actions={(row) => (
-            <button className="sa-btn-outline" onClick={() => handleOpenEditModal(row)}>
-              Edit
-            </button>
+            <div className="ms-actions">
+              <button className="sa-btn-outline" onClick={() => handleOpenEditModal(row)}>
+                Edit
+              </button>
+              <button
+                type="button"
+                className="ms-icon-btn"
+                onClick={() => handleOpenInfoModal(row)}
+                title="View full details"
+                aria-label={`View details of ${row.name}`}
+              >
+                <Info size={18} strokeWidth={2} />
+              </button>
+            </div>
           )}
         />
       </div>
@@ -108,6 +125,8 @@ export default function ManageSanghas() {
       {editTarget && (
         <EditSanghaModal sangha={editTarget} onClose={handleCloseEditModal} onChanged={handleChanged} />
       )}
+
+      {infoTarget && <SanghaInfoModal sangha={infoTarget} onClose={handleCloseInfoModal} />}
 
       {toast && <div className="sa-toast">{toast}</div>}
     </div>

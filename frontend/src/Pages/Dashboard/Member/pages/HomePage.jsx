@@ -137,10 +137,10 @@ export default function HomePage({ user = {}, onNavigate }) {
         <button
           type="button"
           className="hp-loan-btn"
-          onClick={() => onNavigate?.("loans")}
+          onClick={() => onNavigate?.("savings", { openRequest: true })}
         >
           <HandCoins size={18} />
-          Loan Approval Request
+          Request emergency money from your Sangha Savings Account.
         </button>
       </section>
 

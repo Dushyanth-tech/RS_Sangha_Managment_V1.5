@@ -84,6 +84,8 @@ class User(Base):
     creator: Mapped["User"] = relationship(remote_side=[id])
 
     sangha_id: Mapped[int | None] = mapped_column(ForeignKey("sanghas.id"), nullable=True)
+    # When the member was added to their current sangha (NULL if added before this column existed)
+    sangha_joined_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
         # Entered by admin/superadmin from a real report. Never calculated here.
     cibil_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cibil_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -183,6 +185,8 @@ class Sanghas(Base):
     state: Mapped[str] = mapped_column(String(20))
     isActive: Mapped[bool] = mapped_column(Boolean, default=True)
     membersCount: Mapped[int] = mapped_column(Integer, default=0)
+    # NULL for sanghas created before this column existed
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=datetime.utcnow)
 
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))            # superadmin or admin
     admin_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)   # must have role=admin
@@ -552,7 +556,7 @@ class FundPayment(Base):
     )
 
 class Contribution(Base):
-    """One row per day a member pays towards the Sangha. Counts only once an admin confirms it."""
+    """A member's weekly Sangha contribution, confirmed by an admin before it counts."""
     __tablename__ = "contributions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

@@ -1,12 +1,12 @@
 from app.crypto import encrypt_value, decrypt_value, mask_last4, encrypt_bytes, decrypt_bytes, hash_value
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 # from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from app.credit_score import calculate_internal_score
 from app.emergency_eligibility import evaluate_emergency_eligibility
 from app.authSchema import CreditScoreResponse, AttendanceSubmit, AttendanceUpdate
-from app.authSchema import NewUser, LoginUser, GoogleAuthRequest, NewSanghas, Search, AdminRequestCreate,AddAdminRequest,RemoveSanghasPayload,SanghaUpdate, ProfileWizardUpdate, NotificationCreate, ClearNotificationsRequest, SanghaSavingsAccountCreate, CibilUpdate, FundRequestCreate, FundRequestReview, FundRepaymentCreate, FundPaymentCreate, FundPaymentConfirm, FundPaymentReject, ContributionCreate, SettingsProfileUpdate, ChangePasswordRequest, NotificationPreferencesUpdate
+from app.authSchema import NewUser, LoginUser, GoogleAuthRequest, NewSanghas, Search, AdminRequestCreate,AddAdminRequest,RemoveSanghasPayload,SanghaUpdate, ProfileWizardUpdate, NotificationCreate, ClearNotificationsRequest, SanghaSavingsAccountCreate, CibilUpdate, FundRequestCreate, FundRequestReview, FundRepaymentCreate, FundPaymentCreate, FundPaymentConfirm, FundPaymentReject, ContributionCreate, SettingsProfileUpdate, AuthenticatedPasswordChangeRequest, PasswordResetRequest, NotificationPreferencesUpdate
 from app.authSchema import (
     MemberBankBalanceSnapshotCreateResponse,
     MemberBankBalanceSnapshotResponse,
@@ -42,6 +42,12 @@ import os, uuid
 import calendar
 import hashlib
 import secrets
+from io import BytesIO
+
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.comments import Comment
+from openpyxl.utils import get_column_letter
 
 app = FastAPI()
 
@@ -163,6 +169,161 @@ def get_overview_stats(
         "verifiedMembers": verified_members or 0,
         "unverifiedMembers": unverified_members or 0,
     }
+
+# ---------------------------------------------------------------------
+# GET /admin/overview
+# Everything the Admin dashboard Overview needs, in one call and scoped to
+# the Sanghas THIS admin manages (the backend decides, not the client).
+# Optional ?sangha_id= narrows every number and the weekly graph to one Sangha.
+# ---------------------------------------------------------------------
+@app.get("/admin/overview")
+def get_admin_overview(
+    weeks: int = Query(8, ge=1, le=26),
+    sangha_id: int | None = None,
+    db: Session = Depends(get_db),
+    current_user_id=Depends(get_current_user),
+):
+    user = db.query(User).filter(User.id == int(current_user_id)).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found.")
+    if getattr(user.role, "value", user.role) != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can view this overview.")
+
+    managed = db.query(Sanghas).filter(Sanghas.admin_id == user.id).order_by(Sanghas.id).all()
+    managed_ids = [s.id for s in managed]
+    if sangha_id is not None:
+        if sangha_id not in managed_ids:
+            raise HTTPException(status_code=403, detail="You do not manage this Sangha.")
+        ids = [sangha_id]
+    else:
+        ids = managed_ids
+
+    # ---- week buckets (Monday-Sunday, India time), oldest -> newest ----
+    this_monday = _week_start(_today_ist())
+    week_starts = [this_monday - timedelta(weeks=i) for i in range(weeks - 1, -1, -1)]
+    buckets = {
+        w: {"contributions": ZERO, "repayments": ZERO, "interest": ZERO, "disbursed": ZERO}
+        for w in week_starts
+    }
+
+    savings_accounts, req_summary = [], {}
+    approvals = {"approvedAmount": ZERO, "disbursedAmount": ZERO, "repaidAmount": ZERO,
+                 "interestEarned": ZERO, "outstanding": ZERO}
+
+    if ids:
+        # ---- savings accounts + balances ----
+        accounts = (
+            db.query(SanghaSavingsAccount, Sanghas)
+            .join(Sanghas, Sanghas.id == SanghaSavingsAccount.sangha_id)
+            .filter(SanghaSavingsAccount.sangha_id.in_(ids))
+            .order_by(Sanghas.id)
+            .all()
+        )
+        savings_accounts = [
+            {"sanghaId": s.id, "sanghaName": s.name, "status": a.status, "balance": float(_balance(a))}
+            for a, s in accounts
+        ]
+
+        # ---- fund (loan) requests by status ----
+        rows = (
+            db.query(FundRequest.status, func.count(FundRequest.id),
+                     func.coalesce(func.sum(FundRequest.amount_requested), 0))
+            .filter(FundRequest.sangha_id.in_(ids))
+            .group_by(FundRequest.status)
+            .all()
+        )
+        req_summary = {st.value: (int(c), _d(amt)) for st, c, amt in rows}
+
+        # ---- money side of approvals ----
+        approved_like = (
+            FundRequestStatus.approved, FundRequestStatus.disbursed,
+            FundRequestStatus.repaying, FundRequestStatus.completed,
+        )
+        approvals["approvedAmount"] = _d(
+            db.query(func.coalesce(func.sum(FundRequest.amount_approved), 0))
+            .filter(FundRequest.sangha_id.in_(ids), FundRequest.status.in_(approved_like)).scalar()
+        )
+        approvals["disbursedAmount"] = _d(
+            db.query(func.coalesce(func.sum(FundRequest.amount_approved), 0))
+            .filter(FundRequest.sangha_id.in_(ids), FundRequest.disbursed_at.isnot(None)).scalar()
+        )
+        paid = (
+            db.query(func.coalesce(func.sum(FundRepayment.principal), 0),
+                     func.coalesce(func.sum(FundRepayment.interest), 0))
+            .filter(FundRepayment.sangha_id.in_(ids)).one()
+        )
+        approvals["repaidAmount"], approvals["interestEarned"] = _d(paid[0]), _d(paid[1])
+        active = (
+            db.query(FundRequest)
+            .filter(FundRequest.sangha_id.in_(ids), FundRequest.status.in_(ACTIVE_STATUSES)).all()
+        )
+        rm = _repaid_map(db, [r.id for r in active])
+        approvals["outstanding"] = sum((_outstanding_of(r, rm) for r in active), ZERO)
+
+        # ---- weekly money movement ----
+        ist = timedelta(hours=5, minutes=30)
+        start_utc = datetime.combine(week_starts[0], datetime.min.time()) - ist
+
+        def bucket_of(dt):
+            return _week_start((dt + ist).date())
+
+        txns = (
+            db.query(FundTransaction.kind, FundTransaction.amount, FundTransaction.created_at)
+            .filter(FundTransaction.sangha_id.in_(ids), FundTransaction.created_at >= start_utc).all()
+        )
+        key = {"disbursement": "disbursed", "repayment": "repayments", "interest": "interest"}
+        for kind, amount, created_at in txns:
+            b = buckets.get(bucket_of(created_at))
+            if b is not None and kind in key:
+                b[key[kind]] += _d(amount)
+
+        contribs = (
+            db.query(Contribution.amount, Contribution.reviewed_at)
+            .filter(Contribution.sangha_id.in_(ids), Contribution.status == "Confirmed",
+                    Contribution.reviewed_at.isnot(None), Contribution.reviewed_at >= start_utc).all()
+        )
+        for amount, reviewed_at in contribs:
+            b = buckets.get(bucket_of(reviewed_at))
+            if b is not None:
+                b["contributions"] += _d(amount)
+
+    weekly = []
+    for w in week_starts:
+        b = buckets[w]
+        money_in = b["contributions"] + b["repayments"] + b["interest"]
+        weekly.append({
+            "weekStart": w.isoformat(),
+            "label": f"{w:%d %b}",
+            "contributions": float(b["contributions"]),
+            "repayments": float(b["repayments"] + b["interest"]),
+            "disbursed": float(b["disbursed"]),
+            "moneyIn": float(money_in),
+            "moneyOut": float(b["disbursed"]),
+            "total": float(money_in + b["disbursed"]),
+        })
+
+    def cnt(*names):
+        return sum(req_summary.get(n, (0, ZERO))[0] for n in names)
+
+    return {
+        "sanghas": [{"id": s.id, "name": s.name} for s in managed],   # for the Sangha picker
+        "selectedSanghaId": sangha_id,
+        "savings": {
+            "accountsCount": len(savings_accounts),
+            "totalBalance": float(sum((_d(a["balance"]) for a in savings_accounts), ZERO)),
+            "accounts": savings_accounts,
+        },
+        "loanRequests": {
+            "total": cnt(*req_summary.keys()),
+            "pending": cnt("Pending", "Under Review"),
+            "approved": cnt("Approved", "Disbursed", "Repaying", "Completed"),
+            "rejected": cnt("Rejected"),
+            "totalRequestedAmount": float(sum((v[1] for v in req_summary.values()), ZERO)),
+        },
+        "loanApprovals": {k: float(v) for k, v in approvals.items()},
+        "weekly": weekly,
+    }
+
 
 @app.post("/auth/register")
 def register_user(user: NewUser, db = Depends(get_db)):
@@ -400,6 +561,158 @@ def list_sanghas(db=Depends(get_db), current_user_id=Depends(get_current_user)):
     ]
 
 
+# ---------------------------------------------------------------------
+# GET /admin/sanghas/{sangha_id}/details
+# Complete information about one Sangha for the "Info" popup in Manage Sanghas.
+# Admin: only their own Sanghas. Superadmin: any.
+# ---------------------------------------------------------------------
+@app.get("/admin/sanghas/{sangha_id}/details")
+def get_sangha_details(
+    sangha_id: int,
+    db: Session = Depends(get_db),
+    current_user_id=Depends(get_current_user),
+):
+    from sqlalchemy.orm import load_only
+
+    _require_sangha_manager(db, current_user_id, sangha_id)
+
+    sangha = db.query(Sanghas).filter(Sanghas.id == sangha_id).first()
+    if not sangha:
+        raise HTTPException(status_code=404, detail="Sangha not found.")
+
+    def name_of(user_id):
+        if not user_id:
+            return None
+        return db.query(User.fullname).filter(User.id == user_id).scalar()
+
+    def utc_iso(dt):
+        # Stored as naive UTC; the trailing Z lets the browser convert to local time.
+        return dt.isoformat() + "Z" if dt else None
+
+    # ---- savings account (balance only; no account number) ----
+    account = _account_for(db, sangha_id)
+    bank = None
+    if account:
+        bank = {
+            "bankName": decrypt_value(account.bank_name_enc),
+            "accountType": decrypt_value(account.account_type_enc),
+            "status": account.status,
+            "balance": float(_balance(account)),
+        }
+
+    # ---- members (skip the heavy image columns; photos load separately) ----
+    members = (
+        db.query(User)
+        .options(load_only(
+            User.id, User.fullname, User.phone, User.address,
+            User.role, User.sangha_joined_at,
+        ))
+        .filter(User.sangha_id == sangha_id)
+        .order_by(User.fullname.asc())
+        .all()
+    )
+    member_ids = [m.id for m in members]
+
+    with_photo, received, outstanding = set(), {}, {}
+    if member_ids:
+        with_photo = {
+            row[0] for row in db.query(User.id)
+            .filter(User.id.in_(member_ids), User.profile_photo_image.isnot(None)).all()
+        }
+
+        # money actually handed over to each member by this Sangha
+        for member_id, total, loans in (
+            db.query(
+                FundRequest.member_id,
+                func.coalesce(func.sum(FundRequest.amount_approved), 0),
+                func.count(FundRequest.id),
+            )
+            .filter(
+                FundRequest.sangha_id == sangha_id,
+                FundRequest.member_id.in_(member_ids),
+                FundRequest.disbursed_at.isnot(None),
+            )
+            .group_by(FundRequest.member_id)
+            .all()
+        ):
+            received[member_id] = (_d(total), int(loans))
+
+        # what each member still has to pay back
+        active = (
+            db.query(FundRequest)
+            .filter(
+                FundRequest.sangha_id == sangha_id,
+                FundRequest.member_id.in_(member_ids),
+                FundRequest.status.in_(ACTIVE_STATUSES),
+            )
+            .all()
+        )
+        repaid = _repaid_map(db, [r.id for r in active])
+        for r in active:
+            outstanding[r.member_id] = outstanding.get(r.member_id, ZERO) + _outstanding_of(r, repaid)
+
+    members_out = []
+    for m in members:
+        got, loans = received.get(m.id, (ZERO, 0))
+        role = getattr(m.role, "value", m.role)
+        members_out.append({
+            "id": m.id,
+            "name": m.fullname,
+            "phone": m.phone,
+            "address": m.address,
+            "isSubadmin": role == "subadmin" or m.id == sangha.subadmin_id,
+            "joinedAt": utc_iso(m.sangha_joined_at),
+            "hasPhoto": m.id in with_photo,
+            "receivedFromSangha": float(got),
+            "loansTaken": loans,
+            "outstanding": float(outstanding.get(m.id, ZERO)),
+        })
+
+    return {
+        "sangha": {
+            "id": sangha.id,
+            "name": sangha.name,
+            "code": sangha.code,
+            "address": sangha.address,
+            "city": sangha.city,
+            "state": sangha.state,
+            "isActive": bool(sangha.isActive),
+            "createdAt": utc_iso(sangha.created_at),
+            "adminName": name_of(sangha.admin_id),
+            "subadminName": name_of(sangha.subadmin_id),
+            "membersCount": len(members),
+            "capacity": MAX_MEMBERS_PER_SANGHA,
+        },
+        "bank": bank,
+        "members": members_out,
+        "totals": {
+            "receivedFromSangha": float(sum((v[0] for v in received.values()), ZERO)),
+            "outstanding": float(sum(outstanding.values(), ZERO)),
+        },
+    }
+
+
+# ---------------------------------------------------------------------
+# GET /admin/sanghas/{sangha_id}/members/{member_id}/photo
+# Profile photo of a member of a Sangha the caller manages.
+# ---------------------------------------------------------------------
+@app.get("/admin/sanghas/{sangha_id}/members/{member_id}/photo")
+def get_sangha_member_photo(
+    sangha_id: int,
+    member_id: int,
+    db: Session = Depends(get_db),
+    current_user_id=Depends(get_current_user),
+):
+    _require_sangha_manager(db, current_user_id, sangha_id)
+    member = db.query(User).filter(User.id == member_id, User.sangha_id == sangha_id).first()
+    if not member or not member.profile_photo_image:
+        raise HTTPException(status_code=404, detail="No profile photo on file.")
+    return Response(
+        content=member.profile_photo_image,
+        media_type=member.profile_photo_content_type or "image/jpeg",
+    )
+
+
 @app.get("/member/my-sangha")
 def get_my_sangha(
     db=Depends(get_db),
@@ -541,6 +854,7 @@ def add_member(
         )
 
     member.sangha_id = sangha_id
+    member.sangha_joined_at = datetime.utcnow()
     sangha.membersCount = current_count + 1
     db.commit()
 
@@ -759,6 +1073,7 @@ def remove_member(
         raise HTTPException(400, "User is not a member of this sangha")
 
     member.sangha_id = None
+    member.sangha_joined_at = None
     if sangha.membersCount > 0:
         sangha.membersCount -= 1
     db.commit()
@@ -1338,7 +1653,9 @@ def delete_sangha(
     subadmin_id = sangha.subadmin_id
 
     # 1. Detach all members (they become unassigned, not deleted)
-    db.query(User).filter(User.sangha_id == sangha_id).update({User.sangha_id: None})
+    db.query(User).filter(User.sangha_id == sangha_id).update(
+        {User.sangha_id: None, User.sangha_joined_at: None}
+    )
 
     # 2. Delete any requests tied to this sangha (they reference it by FK)
     db.query(SubAdminRequest).filter(SubAdminRequest.sangha_id == sangha_id).delete()
@@ -1528,6 +1845,7 @@ def get_profile_wizard(db: Session = Depends(get_db), current_user_id=Depends(ge
     return {
         "profile": {
             "fullname": user.fullname,
+            "is_verified": bool(user.isVerified),
             "date_of_birth": user.date_of_birth,
             "email": user.email,
             "phone": user.phone,
@@ -1583,7 +1901,7 @@ def update_settings_profile(
 
 @app.post("/me/settings/change-password")
 def change_account_password(
-    payload: ChangePasswordRequest,
+    payload: AuthenticatedPasswordChangeRequest,
     db: Session = Depends(get_db),
     current_user_id=Depends(get_current_user),
 ):
@@ -1600,6 +1918,24 @@ def change_account_password(
         db.rollback()
         raise HTTPException(status_code=500, detail="Unable to change your password.") from exc
     return {"detail": "Password changed successfully."}
+
+
+@app.post("/me/settings/reset-password")
+def reset_account_password(
+    payload: PasswordResetRequest,
+    db: Session = Depends(get_db),
+    current_user_id=Depends(get_current_user),
+):
+    user = _load_user(db, current_user_id)
+    if verify_password(payload.new_password, user.password):
+        raise HTTPException(status_code=400, detail="New password must be different from the current password.")
+    user.password = hash_password(payload.new_password)
+    try:
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Unable to reset your password.") from exc
+    return {"detail": "Your password has been changed successfully."}
 
 
 @app.get("/me/settings/notification-preferences")
@@ -1717,6 +2053,9 @@ async def complete_profile(
     if not user:
         raise HTTPException(status_code=401, detail="User not found.")
 
+    if user.isVerified:
+        raise HTTPException(status_code=403, detail="Verified account details cannot be edited.")
+
     if fullname:
         user.fullname = fullname.strip()
     if date_of_birth:
@@ -1804,6 +2143,22 @@ def _require_superadmin(db: Session, current_user_id):
         raise HTTPException(status_code=401, detail="User not found.")
     if user.role != "superadmin":
         raise HTTPException(status_code=403, detail="Only superadmin can manage notifications.")
+    return user
+
+
+def _require_member_access(db: Session, current_user_id, member_id: int):
+    """Superadmin: any member. Admin: only members of the Sanghas they manage."""
+    user = _require_staff(db, current_user_id)
+    if user.role == "superadmin":
+        return user
+    manages = (
+        db.query(User.id)
+        .join(Sanghas, Sanghas.id == User.sangha_id)
+        .filter(User.id == member_id, Sanghas.admin_id == user.id)
+        .first()
+    )
+    if not manages:
+        raise HTTPException(status_code=403, detail="You can only access members of the Sanghas you manage.")
     return user
 
 
@@ -1905,7 +2260,7 @@ def get_my_photo(db: Session = Depends(get_db), current_user_id=Depends(get_curr
 
 @app.get("/superadmin/members/{member_id}/photo")
 def get_member_photo(member_id: int, db: Session = Depends(get_db), current_user_id=Depends(get_current_user)):
-    _require_superadmin(db, current_user_id)
+    _require_member_access(db, current_user_id, member_id)
     user = db.query(User).filter(User.id == member_id).first()
     if not user or not user.profile_photo_image:
         raise HTTPException(404, "No profile photo on file.")
@@ -1929,7 +2284,7 @@ def get_my_id_proof_image(db: Session = Depends(get_db), current_user_id=Depends
 
 @app.get("/superadmin/members/{member_id}/pan-image")
 def get_member_pan_image(member_id: int, db: Session = Depends(get_db), current_user_id=Depends(get_current_user)):
-    _require_superadmin(db, current_user_id)
+    _require_member_access(db, current_user_id, member_id)
     user = db.query(User).filter(User.id == member_id).first()
     if not user or not user.pan_image_enc:
         raise HTTPException(404, "No PAN image on file.")
@@ -1938,7 +2293,7 @@ def get_member_pan_image(member_id: int, db: Session = Depends(get_db), current_
 
 @app.get("/superadmin/members/{member_id}/id-proof-image")
 def get_member_id_proof_image(member_id: int, db: Session = Depends(get_db), current_user_id=Depends(get_current_user)):
-    _require_superadmin(db, current_user_id)
+    _require_member_access(db, current_user_id, member_id)
     user = db.query(User).filter(User.id == member_id).first()
     if not user or not user.id_proof_image_enc:
         raise HTTPException(404, "No ID proof image on file.")
@@ -2127,12 +2482,12 @@ def _require_staff(db: Session, current_user_id):
 
 @app.get("/superadmin/members")
 def list_members(db: Session = Depends(get_db), current_user_id=Depends(get_current_user)):
-    _require_superadmin(db, current_user_id)
+    viewer = _require_staff(db, current_user_id)    # superadmin: all members; admin: own Sanghas only
 
     sangha = aliased(Sanghas)
     admin = aliased(User)
 
-    rows = (
+    query = (
         db.query(User, sangha.name, admin.fullname)
         .join(BankDetails, BankDetails.user_id == User.id)
         .outerjoin(sangha, User.sangha_id == sangha.id)
@@ -2145,8 +2500,10 @@ def list_members(db: Session = Depends(get_db), current_user_id=Depends(get_curr
             User.pan_number_enc.is_not(None),
             BankDetails.account_number_enc.is_not(None),
         )
-        .all()
     )
+    if viewer.role == "admin":
+        query = query.filter(sangha.admin_id == viewer.id)
+    rows = query.all()
 
     return [
         {
@@ -2163,7 +2520,7 @@ def list_members(db: Session = Depends(get_db), current_user_id=Depends(get_curr
 
 @app.get("/superadmin/members/{member_id}")
 def get_member_detail(member_id: int, db: Session = Depends(get_db), current_user_id=Depends(get_current_user)):
-    _require_superadmin(db, current_user_id)
+    _require_member_access(db, current_user_id, member_id)
 
     member = db.query(User).filter(User.id == member_id, User.role == "member").first()
     if not member:
@@ -2209,7 +2566,7 @@ def verify_member(
     db: Session = Depends(get_db),
     current_user_id=Depends(get_current_user),
 ):
-    verifier = _require_staff(db, current_user_id)   # returns the logged-in user (admin or superadmin)
+    verifier = _require_member_access(db, current_user_id, member_id)   # superadmin: any member; admin: own Sanghas only
 
     member = db.query(User).filter(User.id == member_id, User.role == "member").first()
     if not member:
@@ -2711,7 +3068,7 @@ def set_member_cibil(
     db: Session = Depends(get_db),
     current_user_id=Depends(get_current_user),
 ):
-    _require_staff(db, current_user_id)
+    _require_member_access(db, current_user_id, member_id)
 
     member = db.query(User).filter(User.id == member_id, User.role == "member").first()
     if not member:
@@ -4371,7 +4728,7 @@ def create_contribution(
         f"You can pay again from {next_week:%A, %d %b %Y}."
     )
 
-    # Any payment inside this week counts, including older day-by-day payments
+    # Any pending or confirmed payment in this week reserves the weekly payment slot.
     taken = (
         db.query(Contribution.id)
         .filter(
@@ -4433,6 +4790,219 @@ def _contributions_query(db: Session, user: User):
     if user.role == "admin":
         q = q.filter(Sanghas.admin_id == user.id)
     return q
+
+
+@app.get("/sangha-savings/reports/sanghas")
+def report_sanghas(
+    db: Session = Depends(get_db),
+    current_user_id=Depends(get_current_user),
+):
+    """Return only Sanghas the current admin may include in a report."""
+    user = _load_user(db, current_user_id)
+    if user.role not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="Only admins can download member reports.")
+    sangha_query = db.query(Sanghas)
+    if user.role == "admin":
+        sangha_query = sangha_query.filter(Sanghas.admin_id == user.id)
+    sanghas = sangha_query.order_by(Sanghas.name.asc()).all()
+    return {
+        "role": str(user.role.value if hasattr(user.role, "value") else user.role),
+        "sanghas": [{"id": sangha.id, "name": sangha.name} for sangha in sanghas],
+    }
+
+
+@app.get("/sangha-savings/reports/members.xlsx")
+def download_member_report(
+    sangha_id: int = Query(...),
+    month: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    db: Session = Depends(get_db),
+    current_user_id=Depends(get_current_user),
+):
+    """Export the selected Sangha's monthly member account book."""
+    user = _load_user(db, current_user_id)
+    if user.role not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="Only admins can download member reports.")
+    try:
+        month_start = date.fromisoformat(f"{month}-01")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Month must be a valid YYYY-MM value.") from exc
+    next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    month_start_dt = datetime.combine(month_start, datetime.min.time())
+    next_month_dt = datetime.combine(next_month, datetime.min.time())
+
+    sangha_query = db.query(Sanghas).filter(Sanghas.id == sangha_id)
+    if user.role == "admin":
+        sangha_query = sangha_query.filter(Sanghas.admin_id == user.id)
+    sangha = sangha_query.first()
+    if not sangha:
+        raise HTTPException(status_code=403, detail="You cannot download a report for that Sangha.")
+
+    members = (
+        db.query(User)
+        .filter(User.sangha_id == sangha.id, User.role == Role.member)
+        .order_by(User.fullname.asc())
+        .all()
+    )
+    member_ids = [member.id for member in members]
+    report_rows = {
+        member.id: {
+            "member": member,
+            "weekly": [ZERO for _ in range(5 if calendar.monthrange(month_start.year, month_start.month)[1] > 28 else 4)],
+            "attendance": [],
+            "fine_assessed": ZERO,
+            "interest_paid": ZERO,
+            "debt_given": ZERO,
+        }
+        for member in members
+    }
+    week_count = 5 if calendar.monthrange(month_start.year, month_start.month)[1] > 28 else 4
+
+    if member_ids:
+        for contribution in (
+            db.query(Contribution)
+            .filter(
+                Contribution.sangha_id == sangha.id,
+                Contribution.member_id.in_(member_ids),
+                Contribution.status == "Confirmed",
+                Contribution.for_date >= month_start,
+                Contribution.for_date < next_month,
+            )
+            .all()
+        ):
+            # Report weeks are seven-day accounting periods within the selected month.
+            week_index = min((contribution.for_date.day - 1) // 7, week_count - 1)
+            report_rows[contribution.member_id]["weekly"][week_index] += _d(contribution.amount)
+
+        for record, session in (
+            db.query(AttendanceRecord, AttendanceSession)
+            .join(AttendanceSession, AttendanceSession.id == AttendanceRecord.session_id)
+            .filter(
+                AttendanceRecord.member_id.in_(member_ids),
+                AttendanceSession.sangha_id == sangha.id,
+                AttendanceSession.meeting_date >= month_start,
+                AttendanceSession.meeting_date < next_month,
+            )
+            .all()
+        ):
+            member_report = report_rows[record.member_id]
+            member_report["attendance"].append(bool(record.present))
+            member_report["fine_assessed"] += _d(record.fine_amount)
+
+        for request in (
+            db.query(FundRequest)
+            .filter(
+                FundRequest.member_id.in_(member_ids),
+                FundRequest.sangha_id == sangha.id,
+                FundRequest.disbursed_at.isnot(None),
+                FundRequest.disbursed_at >= month_start_dt,
+                FundRequest.disbursed_at < next_month_dt,
+            )
+            .all()
+        ):
+            report_rows[request.member_id]["debt_given"] += _d(request.amount_approved or ZERO)
+
+        for repayment in (
+            db.query(FundRepayment)
+            .filter(
+                FundRepayment.member_id.in_(member_ids),
+                FundRepayment.sangha_id == sangha.id,
+                FundRepayment.paid_at >= month_start_dt,
+                FundRepayment.paid_at < next_month_dt,
+            )
+            .all()
+        ):
+            report_rows[repayment.member_id]["interest_paid"] += _d(repayment.interest)
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = month_start.strftime("%b %Y")[:31]
+    headers = [
+        "Sangha Name", "Sangha Code", "Debt Given (₹)", "Member Name", "Phone Number",
+        "Week 1 Contribution (₹)", "Week 2 Contribution (₹)", "Week 3 Contribution (₹)",
+        "Week 4 Contribution (₹)",
+    ]
+    if week_count == 5:
+        headers.append("Week 5 Contribution (₹)")
+    headers.extend(["Attendance (Y/N)", "Attendance Fine (₹)", "Interest Paid (₹)", "Total Money Collected (₹)"])
+    sheet.append(headers)
+    for cell in sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="373276")
+        cell.alignment = Alignment(vertical="center", wrap_text=True)
+    fine_header_column = 11 if week_count == 4 else 12
+    sheet.cell(1, fine_header_column).comment = Comment(
+        "This value is from attendance_records.fine_amount and represents fines assessed for absences. "
+        "The database does not record whether these fines were actually paid.",
+        "RS-Sangha",
+    )
+
+    for row_index, data in enumerate(report_rows.values(), start=2):
+        member = data["member"]
+        weekly = data["weekly"]
+        attendance = "Y" if any(data["attendance"]) else "N"
+        attendance_column = 6 + week_count
+        interest_column = attendance_column + 2
+        sheet.append([
+            sangha.name, sangha.code or "", float(data["debt_given"]), member.fullname or "",
+            member.phone or "", *[float(amount) for amount in weekly], attendance,
+            float(data["fine_assessed"]), float(data["interest_paid"]),
+            f"=SUM(F{row_index}:{get_column_letter(5 + week_count)}{row_index})+{get_column_letter(fine_header_column)}{row_index}+{get_column_letter(interest_column)}{row_index}",
+        ])
+
+    data_last_row = len(report_rows) + 1
+    total_row = data_last_row + 1
+    sheet.cell(total_row, 1, "TOTAL")
+    sheet.cell(total_row, 1).font = Font(bold=True, color="FFFFFF")
+    for cell in sheet[total_row]:
+        cell.fill = PatternFill("solid", fgColor="373276")
+        cell.font = Font(bold=True, color="FFFFFF")
+    for column in [3, *range(6, 6 + week_count), fine_header_column, fine_header_column + 1, fine_header_column + 2]:
+        letter = get_column_letter(column)
+        if data_last_row >= 2:
+            sheet.cell(total_row, column, f"=SUM({letter}2:{letter}{data_last_row})")
+        else:
+            sheet.cell(total_row, column, 0)
+
+    widths = [22, 16, 19, 26, 18] + [20] * week_count + [17, 24, 18, 25]
+    for index, width in enumerate(widths, start=1):
+        sheet.column_dimensions[get_column_letter(index)].width = width
+    currency_columns = [3, *range(6, 6 + week_count), fine_header_column, fine_header_column + 1, fine_header_column + 2]
+    border = Border(
+        left=Side(style="thin", color="D9DCE8"),
+        right=Side(style="thin", color="D9DCE8"),
+        top=Side(style="thin", color="D9DCE8"),
+        bottom=Side(style="thin", color="D9DCE8"),
+    )
+    for row in sheet.iter_rows(min_row=1, max_row=total_row, min_col=1, max_col=len(headers)):
+        for cell in row:
+            cell.alignment = Alignment(vertical="center", wrap_text=cell.row == 1)
+            cell.border = border
+            if 2 <= cell.row <= data_last_row and cell.row % 2 == 1:
+                cell.fill = PatternFill("solid", fgColor="F5F7FB")
+        for column in currency_columns:
+            cell = sheet.cell(row[0].row, column)
+            cell.number_format = '₹#,##0.00'
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{max(data_last_row, 1)}"
+    sheet.row_dimensions[1].height = 38
+    sheet.row_dimensions[total_row].height = 24
+    sheet.page_setup.orientation = "landscape"
+    sheet.page_setup.fitToWidth = 1
+    sheet.page_setup.fitToHeight = 0
+    sheet.sheet_properties.pageSetUpPr.fitToPage = True
+    sheet.print_title_rows = "1:1"
+    sheet.print_area = f"A1:{get_column_letter(len(headers))}{total_row}"
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    safe_sangha_name = re.sub(r"[^A-Za-z0-9_-]+", "_", sangha.name).strip("_-") or f"Sangha_{sangha.id}"
+    filename = f"{safe_sangha_name}_{month_start.strftime('%B_%Y')}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/sangha-savings/contributions/pending")

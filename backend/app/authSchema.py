@@ -61,8 +61,25 @@ class SettingsProfileUpdate(BaseModel):
         return value
 
 
-class ChangePasswordRequest(BaseModel):
+class AuthenticatedPasswordChangeRequest(BaseModel):
     current_password: str = Field(..., min_length=1, max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
+    confirm_password: str = Field(..., min_length=8, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, value: str) -> str:
+        return validate_password_strength(value)
+
+    @field_validator("confirm_password")
+    @classmethod
+    def validate_password_confirmation(cls, value: str, info) -> str:
+        if "new_password" in info.data and value != info.data["new_password"]:
+            raise ValueError("New password and confirmation do not match.")
+        return value
+
+
+class PasswordResetRequest(BaseModel):
     new_password: str = Field(..., min_length=8, max_length=128)
     confirm_password: str = Field(..., min_length=8, max_length=128)
 

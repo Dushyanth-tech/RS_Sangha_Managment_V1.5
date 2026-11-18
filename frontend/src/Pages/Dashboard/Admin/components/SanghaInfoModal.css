@@ -1,0 +1,362 @@
+/* =========================================================
+   SANGHA INFO MODAL  +  ROW ACTION BUTTONS (Manage Sanghas)
+   Uses the shared theme variables; fallbacks keep it safe.
+   ========================================================= */
+
+/* ---- row actions: [Edit] [i] ---- */
+.ms-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ms-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1.5px solid var(--line, #e7e8ef);
+  border-radius: 10px;
+  background: var(--white, #fff);
+  color: var(--pink-700, #4f46a5);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.ms-icon-btn:hover {
+  background: var(--blush-100, #eef0ff);
+  border-color: var(--pink-600, #6259b8);
+}
+
+.ms-icon-btn:focus-visible {
+  outline: 2px solid var(--pink-600, #6259b8);
+  outline-offset: 2px;
+}
+
+/* ---- overlay + dialog ---- */
+.si-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(28, 24, 48, 0.5);
+}
+
+.si-modal {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 880px;
+  max-height: 90vh;
+  overflow: hidden;
+  border-radius: 18px;
+  background: var(--white, #fff);
+  box-shadow: 0 24px 60px rgba(30, 24, 70, 0.28);
+}
+
+/* ---- header ---- */
+.si-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--line, #e7e8ef);
+}
+
+.si-header__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--blush-100, #eef0ff);
+  color: var(--pink-700, #4f46a5);
+}
+
+.si-header__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.si-header__text h3 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink, #25273a);
+  font-size: 19px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.si-header__text p {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 3px 0 0;
+  color: var(--muted, #6f7285);
+  font-size: 13px;
+}
+
+.si-status {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.si-status--on {
+  background: #e6f6ee;
+  color: #1c7a4a;
+}
+
+.si-status--off {
+  background: #f3f3f6;
+  color: #7a7d90;
+}
+
+.si-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  background: var(--blush-100, #eef0ff);
+  color: var(--pink-700, #4f46a5);
+  cursor: pointer;
+}
+
+.si-close:hover {
+  background: #e2e5ff;
+}
+
+/* ---- body ---- */
+.si-body {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 20px 22px 26px;
+  overflow-y: auto;
+}
+
+.si-state {
+  margin: 0;
+  padding: 28px 0;
+  color: var(--muted, #6f7285);
+  font-size: 14px;
+  text-align: center;
+}
+
+.si-state--error {
+  color: #b3261e;
+}
+
+/* ---- summary grid ---- */
+.si-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.si-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line, #e7e8ef);
+  border-radius: 14px;
+  background: var(--blush-50, #f8f8fc);
+}
+
+.si-info__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--white, #fff);
+  color: var(--pink-700, #4f46a5);
+}
+
+.si-info__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.si-info__label {
+  color: var(--muted, #6f7285);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.si-info__value {
+  color: var(--ink, #25273a);
+  font-size: 15px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.si-info__hint {
+  color: var(--muted-light, #9498aa);
+  font-size: 12px;
+}
+
+/* ---- members ---- */
+.si-section-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.si-section-title h4 {
+  margin: 0;
+  color: var(--ink, #25273a);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.si-count {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--blush-100, #eef0ff);
+  color: var(--pink-700, #4f46a5);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.si-members {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.si-member {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 1.6fr 1fr 1.3fr;
+  gap: 14px;
+  align-items: start;
+  padding: 14px;
+  border: 1px solid var(--line, #e7e8ef);
+  border-radius: 14px;
+  background: var(--white, #fff);
+}
+
+.si-member__who {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.si-member__name {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  color: var(--ink, #25273a);
+  font-size: 14px;
+  word-break: break-word;
+}
+
+.si-member__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  color: var(--ink, #25273a);
+  font-size: 13.5px;
+  word-break: break-word;
+}
+
+.si-member__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted, #6f7285);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.si-muted {
+  color: var(--muted-light, #9498aa);
+  font-weight: 400;
+}
+
+.si-due {
+  color: #b3541e;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.si-tag {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #fff8ea;
+  color: #b27d2f;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* ---- avatar ---- */
+.si-avatar {
+  flex: none;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.si-avatar--initials {
+  display: grid;
+  place-items: center;
+  background: var(--blush-100, #eef0ff);
+  color: var(--pink-700, #4f46a5);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+/* ---- responsive ---- */
+@media (max-width: 860px) {
+  .si-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .si-member {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .si-member__who,
+  .si-member__field--wide {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 540px) {
+  .si-overlay {
+    padding: 0;
+    align-items: flex-end;
+  }
+
+  .si-modal {
+    max-height: 94vh;
+    border-radius: 18px 18px 0 0;
+  }
+
+  .si-grid {
+    grid-template-columns: 1fr;
+  }
+}

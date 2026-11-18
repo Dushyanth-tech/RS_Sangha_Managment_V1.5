@@ -10,6 +10,25 @@ body {
   overflow-x: clip;
 }
 
+:root {
+  --bg-primary: #f7f8fa;
+  --bg-secondary: #f3f4f6;
+  --bg-card: #fff;
+  --text-primary: #1f2937;
+  --text-secondary: #6b7280;
+  --border-color: #e5e7eb;
+  --input-bg: #fff;
+  --button-primary: #4f46a5;
+  --button-primary-text: #fff;
+  --shadow-color: rgba(17, 24, 39, .14);
+}
+
+html,
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
 img,
 video,
 canvas {
@@ -85,6 +104,195 @@ table {
   max-width: 100%;
 }
 
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-primary: #111827;
+  --bg-secondary: #111827;
+  --bg-card: #1f2937;
+  --text-primary: #f9fafb;
+  --text-secondary: #9ca3af;
+  --border-color: #374151;
+  --input-bg: #1f2937;
+  --button-primary: #f9fafb;
+  --button-primary-text: #111827;
+  --shadow-color: rgba(0, 0, 0, .4);
+  --pink-900: #f9fafb;
+  --pink-700: #e5e7eb;
+  --pink-600: #d1d5db;
+  --pink-500: #9ca3af;
+  --blush-100: #1f2937;
+  --blush-50: #111827;
+  --gold-050: #1f2937;
+  --ink: #f9fafb;
+  --muted: #9ca3af;
+  --muted-light: #9ca3af;
+  --line: #374151;
+  --line-light: #374151;
+  --white: #1f2937;
+  --surface: #1f2937;
+  --surface-soft: #111827;
+  --primary-900: #f9fafb;
+  --primary-800: #e5e7eb;
+  --primary-700: #d1d5db;
+  --primary-600: #9ca3af;
+}
+
+html[data-theme="dark"] body,
+html[data-theme="dark"] .md-shell,
+html[data-theme="dark"] .md-content,
+html[data-theme="dark"] .sa-shell,
+html[data-theme="dark"] .sa-shell__main,
+html[data-theme="dark"] .auth,
+html[data-theme="dark"] .auth__left,
+html[data-theme="dark"] .auth__right,
+html[data-theme="dark"] .sa-shell__content {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+html[data-theme="dark"] .md-topbar,
+html[data-theme="dark"] .md-profile__menu,
+html[data-theme="dark"] .sa-topbar,
+html[data-theme="dark"] .auth__card,
+html[data-theme="dark"] .settings-card,
+html[data-theme="dark"] .settings-page__header,
+html[data-theme="dark"] .settings-nav {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+html[data-theme="dark"] [class*="-card"],
+html[data-theme="dark"] [class*="__card"],
+html[data-theme="dark"] [class*="-panel"],
+html[data-theme="dark"] [class*="__panel"],
+html[data-theme="dark"] [class*="-modal"],
+html[data-theme="dark"] [class*="__modal"] {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+html[data-theme="dark"] [class*="dropdown"],
+html[data-theme="dark"] [class*="__menu"],
+html[data-theme="dark"] [role="menu"],
+html[data-theme="dark"] [role="tooltip"] {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+html[data-theme="dark"] table,
+html[data-theme="dark"] thead,
+html[data-theme="dark"] tbody,
+html[data-theme="dark"] tr,
+html[data-theme="dark"] th,
+html[data-theme="dark"] td {
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+html[data-theme="dark"] th {
+  background-color: var(--bg-card);
+}
+
+html[data-theme="dark"] tr:nth-child(even) {
+  background-color: rgba(31, 41, 55, .55);
+}
+
+html[data-theme="dark"] .settings-card__heading,
+html[data-theme="dark"] .settings-note,
+html[data-theme="dark"] .settings-data-grid > div,
+html[data-theme="dark"] .settings-sangha {
+  background-color: var(--bg-card);
+}
+
+html[data-theme="dark"] input,
+html[data-theme="dark"] select,
+html[data-theme="dark"] textarea,
+html[data-theme="dark"] .settings-button--quiet {
+  background-color: var(--input-bg);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+html[data-theme="dark"] input::placeholder,
+html[data-theme="dark"] textarea::placeholder {
+  color: var(--text-secondary);
+}
+
+html[data-theme="dark"] * {
+  scrollbar-color: #4b5563 var(--bg-primary);
+}
+
+html[data-theme="dark"] ::selection {
+  background: #4b5563;
+  color: #fff;
+}
+
+html[data-theme="dark"] .settings-card__heading h2,
+html[data-theme="dark"] .settings-sangha__title {
+  color: #fff;
+}
+
+html[data-theme="dark"] .settings-forgot-password {
+  color: var(--text-primary);
+  background: transparent;
+  border-color: transparent;
+}
+
+html[data-theme="dark"] button:not(.settings-toggle):not(.settings-forgot-password):not(.password-reset-visibility):not(.auth__link) {
+  background-color: var(--button-primary);
+  color: var(--button-primary-text);
+  border-color: var(--button-primary);
+}
+
+html[data-theme="dark"] .settings-button {
+  background-color: var(--button-primary);
+  color: var(--button-primary-text);
+  border-color: var(--button-primary);
+}
+
+html[data-theme="dark"] .md-brand__mark {
+  background-color: #374151;
+  color: #f9fafb;
+}
+
+html[data-theme="dark"] .md-avatar,
+html[data-theme="dark"] .md-notification-badge {
+  background-color: #4b5563;
+  color: #f9fafb;
+  border-color: #1f2937;
+}
+
+html[data-theme="dark"] .settings-card,
+html[data-theme="dark"] .settings-page__header,
+html[data-theme="dark"] .settings-nav {
+  border-color: #444;
+}
+
+html[data-density="compact"] .settings-page,
+html[data-density="compact"] .sa-shell__content,
+html[data-density="compact"] .md-content {
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+
+html[data-density="compact"] .settings-card__heading {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+html[data-density="compact"] .settings-card__body {
+  gap: 9px;
+  padding: 14px 18px;
+}
+
+html[data-density="compact"] .settings-row {
+  padding: 8px 0;
+}
+
 [class*="modal-overlay"],
 [class$="__overlay"],
 .fr-overlay,
@@ -152,45 +360,6 @@ table {
   .sa-page,
   .md-content {
     padding: 20px 16px;
-  }
-
-  html[data-theme="dark"] {
-    color-scheme: dark;
-    --pink-900: #d3ceff;
-    --pink-700: #b7b0ff;
-    --pink-600: #aaa4ff;
-    --pink-500: #9b94f5;
-    --blush-100: #30304a;
-    --blush-50: #171b28;
-    --gold-050: #342d22;
-    --ink: #e8eaf3;
-    --muted: #a7adbf;
-    --muted-light: #898fa3;
-    --line: #373c50;
-    --line-light: #2c3143;
-    --white: #202435;
-  }
-
-  html[data-theme="dark"] body,
-  html[data-theme="dark"] .md-topbar,
-  html[data-theme="dark"] .md-profile__menu,
-  html[data-theme="dark"] .sa-topbar,
-  html[data-theme="dark"] .sa-shell__content,
-  html[data-theme="dark"] .sa-table-wrapper,
-  html[data-theme="dark"] .sa-table,
-  html[data-theme="dark"] .sa-card,
-  html[data-theme="dark"] .md-card,
-  html[data-theme="dark"] .md-panel {
-    background-color: #171b28;
-    color: #e8eaf3;
-  }
-
-  html[data-theme="dark"] input,
-  html[data-theme="dark"] select,
-  html[data-theme="dark"] textarea {
-    background-color: #202435;
-    color: #e8eaf3;
-    border-color: #373c50;
   }
 
   html[data-density="compact"] .sa-page,

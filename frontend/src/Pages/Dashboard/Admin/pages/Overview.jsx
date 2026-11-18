@@ -1,93 +1,191 @@
-import React, { useState, useEffect } from "react";
-import api from "../../../../api/axiosInstance";
-import {
-  Users,
-  Building2,
-  ClipboardList,
-  Check,
-  AlertCircle,
-  PiggyBank,
-  HandCoins,
-  BadgeCheck,
-  UserCheck,
-} from "lucide-react";
+/**
+ * Admin Dashboard · Overview
+ *
+ * Shows, for the sanghas managed by the logged-in admin:
+ *   - membership and seat capacity
+ *   - savings account balances
+ *   - loan (fund) requests and approvals
+ *   - weekly money flow (confirmed transactions only)
+ *
+ * Data sources
+ *   GET /sanghas                       sangha list with member counts
+ *   GET /admin-requests/pending-count  admin requests awaiting super admin
+ *   GET /admin/overview                savings, loans and weekly money flow
+ */
 
+import React, { useEffect, useState } from "react";
 import {
-  ResponsiveContainer,
-  BarChart,
+  AlertCircle,
+  BadgeCheck,
+  Building2,
+  Check,
+  ClipboardList,
+  HandCoins,
+  PiggyBank,
+  UserCheck,
+  Users,
+} from "lucide-react";
+import {
   Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
   XAxis,
   YAxis,
-  CartesianGrid,
-  Tooltip,
 } from "recharts";
 
+import api from "../../../../api/axiosInstance";
 import "./Overview.css";
 
-// Matches the 20-member limit enforced by the backend.
+/* =========================================================
+   CONSTANTS
+========================================================= */
+
+/** Matches the 20-member limit enforced by the backend. */
 const SANGHA_CAPACITY = 20;
+
+/** Number of weeks shown in the money flow chart. */
+const WEEKS_SHOWN = 8;
+
+const COLORS = {
+  primary: "#4f46a5",
+  primarySoft: "#c7c3ee",
+};
 
 /* =========================================================
    HELPERS
 ========================================================= */
 
-function getStoredUser() {
+const getStoredUser = () => {
   try {
     return JSON.parse(localStorage.getItem("user") || "{}") || {};
   } catch {
     return {};
   }
-}
+};
 
-function getGreeting() {
+const getGreeting = () => {
   const hour = new Date().getHours();
-
   if (hour < 12) return "Good morning";
   if (hour < 17) return "Good afternoon";
-
   return "Good evening";
+};
+
+/** Formats a number as Indian rupees, e.g. 125000 -> ₹1,25,000 */
+const formatINR = (amount) =>
+  `₹${Number(amount || 0).toLocaleString("en-IN", {
+    maximumFractionDigits: 2,
+  })}`;
+
+/** Compact axis label, e.g. 12500 -> ₹13k */
+const formatAxisINR = (value) =>
+  value >= 1000 ? `₹${Math.round(value / 1000)}k` : `₹${value}`;
+
+const pluralize = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+/** The API may return camelCase or snake_case member counts. */
+const getMembersCount = (sangha) =>
+  Number(sangha.membersCount ?? sangha.members_count ?? 0);
+
+const sumBy = (items, key) =>
+  items.reduce((total, item) => total + Number(item[key] || 0), 0);
+
+/* =========================================================
+   DATA HOOKS
+========================================================= */
+
+/** Fetches once on mount and exposes { data, loading, failed }. */
+function useApiData(url, select) {
+  const [state, setState] = useState({
+    data: null,
+    loading: true,
+    failed: false,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    api
+      .get(url)
+      .then((res) => {
+        if (!cancelled)
+          setState({ data: select(res.data), loading: false, failed: false });
+      })
+      .catch(() => {
+        if (!cancelled) setState({ data: null, loading: false, failed: true });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url]);
+
+  return state;
+}
+
+/** Finance data for the selected sangha ("" = all managed sanghas). */
+function useAdminOverview(sanghaId) {
+  const [state, setState] = useState({
+    data: null,
+    loading: true,
+    failed: false,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    setState((prev) => ({ ...prev, loading: true, failed: false }));
+
+    api
+      .get("/admin/overview", {
+        params: {
+          weeks: WEEKS_SHOWN,
+          ...(sanghaId ? { sangha_id: sanghaId } : {}),
+        },
+      })
+      .then((res) => {
+        if (!cancelled)
+          setState({ data: res.data, loading: false, failed: false });
+      })
+      .catch(() => {
+        if (!cancelled)
+          setState((prev) => ({ ...prev, loading: false, failed: true }));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sanghaId]);
+
+  return state;
 }
 
 /* =========================================================
-   STAT TILE
+   SMALL PRESENTATIONAL COMPONENTS
 ========================================================= */
 
-function StatTile({
-  icon: Icon,
-  label,
-  value,
-  loading,
-  failed,
-  attention,
-}) {
+function StatTile({ icon: Icon, label, value, loading, failed, attention }) {
   return (
     <div className="ao-stat">
       <div
-        className={`ao-stat__icon ${
-          attention ? "ao-stat__icon--attention" : ""
-        }`}
+        className={`ao-stat__icon ${attention ? "ao-stat__icon--attention" : ""}`}
       >
         <Icon size={20} strokeWidth={2} />
       </div>
 
       <div className="ao-stat__body">
         <span className="ao-stat__label">{label}</span>
-
         {loading ? (
           <span className="ao-skeleton ao-skeleton--value" />
         ) : (
-          <span className="ao-stat__value">
-            {failed ? "—" : value}
-          </span>
+          <span className="ao-stat__value">{failed ? "—" : value}</span>
         )}
       </div>
     </div>
   );
 }
-
-/* =========================================================
-   SMALL SUMMARY CARD
-========================================================= */
 
 function SummaryCard({
   icon: Icon,
@@ -120,1263 +218,762 @@ function SummaryCard({
         )}
 
         {description && (
-          <span className="ao-summary-card__description">
-            {description}
-          </span>
+          <span className="ao-summary-card__description">{description}</span>
         )}
       </div>
     </div>
   );
 }
 
+function FeatureSection({ eyebrow, title, text, icon: Icon, children }) {
+  return (
+    <section className="ao-feature-section">
+      <div className="ao-feature-section__header">
+        <div>
+          <p className="ao-chart-card__eyebrow">{eyebrow}</p>
+          <h2>{title}</h2>
+          <p>{text}</p>
+        </div>
+        <div className="ao-feature-icon">
+          <Icon size={22} />
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function ProgressBar({ value, max, label, large = false, full = false }) {
+  const percent = max ? Math.min(100, Math.round((value / max) * 100)) : 0;
+
+  return (
+    <div
+      className={`ao-bar ${large ? "ao-bar--lg" : ""}`}
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={max}
+      aria-valuenow={Math.min(value, max)}
+    >
+      <div
+        className={`ao-bar__fill ${full ? "ao-bar__fill--full" : ""}`}
+        style={{ width: `${percent}%` }}
+      />
+    </div>
+  );
+}
+
+function ChartMessage({ children, loading = false }) {
+  return (
+    <div className={loading ? "ao-chart-loading" : "ao-chart-empty"}>
+      {children}
+    </div>
+  );
+}
+
+function EmptyState({ icon: Icon, title, text }) {
+  return (
+    <div className="ao-feature-empty">
+      <Icon size={24} strokeWidth={1.8} />
+      <div>
+        <strong>{title}</strong>
+        <p>{text}</p>
+      </div>
+    </div>
+  );
+}
+
 /* =========================================================
-   MAIN OVERVIEW
+   SECTION COMPONENTS
+========================================================= */
+
+function Header({ greeting, firstName, sanghaLine }) {
+  return (
+    <header className="ao-header">
+      <p className="ao-header__eyebrow">Admin Dashboard</p>
+
+      <h1 className="ao-header__title">
+        {greeting}
+        {firstName ? `, ${firstName}` : ""}
+      </h1>
+
+      {sanghaLine && (
+        <p className="ao-header__sub">
+          <Building2 size={15} strokeWidth={2} />
+          <span>{sanghaLine}</span>
+        </p>
+      )}
+    </header>
+  );
+}
+
+function MembershipChart({ sanghas, totalMembers, loading, failed }) {
+  const data = sanghas.map((s) => ({
+    name: s.name,
+    members: getMembersCount(s),
+  }));
+
+  let body;
+  if (loading) {
+    body = <ChartMessage loading>Loading membership chart...</ChartMessage>;
+  } else if (failed) {
+    body = <ChartMessage>Unable to load membership data.</ChartMessage>;
+  } else if (sanghas.length === 0) {
+    body = <ChartMessage>No Sangha data available.</ChartMessage>;
+  } else {
+    body = (
+      <div className="ao-chart">
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart
+            data={data}
+            margin={{ top: 10, right: 10, left: 0, bottom: 10 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis
+              dataKey="name"
+              tick={{ fontSize: 12 }}
+              tickLine={false}
+              axisLine={false}
+            />
+            <YAxis
+              allowDecimals={false}
+              domain={[0, SANGHA_CAPACITY]}
+              tick={{ fontSize: 12 }}
+              tickLine={false}
+              axisLine={false}
+            />
+            <Tooltip
+              cursor={{ opacity: 0.08 }}
+              formatter={(value) => [`${value} members`, "Members"]}
+            />
+            <Bar
+              dataKey="members"
+              name="Members"
+              fill={COLORS.primary}
+              radius={[6, 6, 0, 0]}
+              maxBarSize={55}
+            />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  }
+
+  return (
+    <section className="ao-charts">
+      <div className="ao-chart-card">
+        <div className="ao-chart-card__header">
+          <div>
+            <p className="ao-chart-card__eyebrow">Membership</p>
+            <h2>Sangha Members</h2>
+          </div>
+          <div className="ao-chart-card__badge">
+            <Users size={16} />
+            <span>{totalMembers} members</span>
+          </div>
+        </div>
+        {body}
+      </div>
+    </section>
+  );
+}
+
+function SanghaFilter({ sanghas, value, onChange }) {
+  if (sanghas.length < 2) return null;
+
+  return (
+    <div className="ao-filter">
+      <label htmlFor="ao-sangha-filter">Money overview for</label>
+      <select
+        id="ao-sangha-filter"
+        className="ao-select"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">All my sanghas</option>
+        {sanghas.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function MoneyFlowChart({ weekly, scopeName, loading, failed }) {
+  const periodTotal = sumBy(weekly, "total");
+  const periodIn = sumBy(weekly, "moneyIn");
+  const periodOut = sumBy(weekly, "moneyOut");
+
+  let body;
+  if (loading) {
+    body = <ChartMessage loading>Loading weekly transactions...</ChartMessage>;
+  } else if (failed) {
+    body = <ChartMessage>Unable to load transaction data.</ChartMessage>;
+  } else if (periodTotal === 0) {
+    body = (
+      <ChartMessage>
+        No confirmed money transactions in the last {WEEKS_SHOWN} weeks.
+      </ChartMessage>
+    );
+  } else {
+    body = (
+      <>
+        <div className="ao-chart">
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart
+              data={weekly}
+              margin={{ top: 10, right: 10, left: 0, bottom: 10 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis
+                dataKey="label"
+                tick={{ fontSize: 12 }}
+                tickLine={false}
+                axisLine={false}
+              />
+              <YAxis
+                tick={{ fontSize: 12 }}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={formatAxisINR}
+              />
+              <Tooltip
+                cursor={{ opacity: 0.08 }}
+                labelFormatter={(label) => `Week of ${label}`}
+                formatter={(value, name) => [formatINR(value), name]}
+              />
+              <Legend iconType="circle" />
+              <Bar
+                dataKey="moneyIn"
+                name="Money in (contributions + repayments)"
+                fill={COLORS.primary}
+                radius={[6, 6, 0, 0]}
+                maxBarSize={32}
+              />
+              <Bar
+                dataKey="moneyOut"
+                name="Money out (loans given)"
+                fill={COLORS.primarySoft}
+                radius={[6, 6, 0, 0]}
+                maxBarSize={32}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        <p className="ao-chart-note">
+          Money in {formatINR(periodIn)} · Money out {formatINR(periodOut)} ·
+          Only confirmed transactions are counted. Weeks run Monday to Sunday.
+        </p>
+      </>
+    );
+  }
+
+  return (
+    <section className="ao-charts">
+      <div className="ao-chart-card">
+        <div className="ao-chart-card__header">
+          <div>
+            <p className="ao-chart-card__eyebrow">
+              Money Transactions · Last {WEEKS_SHOWN} weeks
+            </p>
+            <h2>Weekly Money Flow</h2>
+            <p className="ao-chart-card__sub">{scopeName}</p>
+          </div>
+          <div className="ao-chart-card__badge">
+            <HandCoins size={16} />
+            <span>{formatINR(periodTotal)} total</span>
+          </div>
+        </div>
+        {body}
+      </div>
+    </section>
+  );
+}
+
+function SanghaList({ sanghas, loading, failed }) {
+  let body;
+
+  if (loading) {
+    body = (
+      <ul className="ao-list">
+        {[0, 1, 2].map((i) => (
+          <li key={i} className="ao-sangha">
+            <div className="ao-sangha__main">
+              <span className="ao-skeleton ao-skeleton--line" />
+              <span className="ao-skeleton ao-skeleton--line ao-skeleton--short" />
+            </div>
+            <span className="ao-skeleton ao-skeleton--line" />
+          </li>
+        ))}
+      </ul>
+    );
+  } else if (failed) {
+    body = <p className="ao-empty__text">Your sanghas couldn't be loaded.</p>;
+  } else if (sanghas.length === 0) {
+    body = (
+      <div className="ao-empty">
+        <div className="ao-empty__icon">
+          <Building2 size={22} strokeWidth={1.8} />
+        </div>
+        <p className="ao-empty__title">No sanghas yet</p>
+        <p className="ao-empty__text">Sanghas you manage will appear here.</p>
+      </div>
+    );
+  } else {
+    body = (
+      <ul className="ao-list">
+        {sanghas.map((sangha) => {
+          const count = getMembersCount(sangha);
+          const isFull = count >= SANGHA_CAPACITY;
+          const meta = [
+            sangha.code,
+            sangha.subadmin_name ? `Subadmin: ${sangha.subadmin_name}` : null,
+          ]
+            .filter(Boolean)
+            .join(" · ");
+
+          return (
+            <li key={sangha.id} className="ao-sangha">
+              <div className="ao-sangha__main">
+                <span className="ao-sangha__name">{sangha.name}</span>
+                {meta && <span className="ao-sangha__meta">{meta}</span>}
+              </div>
+
+              <div className="ao-sangha__capacity">
+                <div className="ao-sangha__count">
+                  <span>
+                    {count} / {SANGHA_CAPACITY} members
+                  </span>
+                  {isFull && <span className="ao-tag">Full</span>}
+                </div>
+                <ProgressBar
+                  value={count}
+                  max={SANGHA_CAPACITY}
+                  label={`${sangha.name} membership`}
+                  full={isFull}
+                />
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  }
+
+  return (
+    <section className="ao-card">
+      <header className="ao-card__header">
+        <h2>Your Sanghas</h2>
+        {!loading && !failed && (
+          <span className="ao-card__count">{sanghas.length}</span>
+        )}
+      </header>
+      {body}
+    </section>
+  );
+}
+
+function PendingRequestsCard({ count, loading, failed }) {
+  const hasPending = count > 0;
+
+  return (
+    <section className="ao-card">
+      <header className="ao-card__header">
+        <h2>Pending Requests</h2>
+      </header>
+
+      {loading ? (
+        <span className="ao-skeleton ao-skeleton--line" />
+      ) : failed ? (
+        <p className="ao-empty__text">Request status couldn't be loaded.</p>
+      ) : (
+        <div className="ao-pending">
+          <div
+            className={`ao-pending__icon ${
+              hasPending ? "ao-pending__icon--attention" : ""
+            }`}
+          >
+            {hasPending ? (
+              <ClipboardList size={20} strokeWidth={2} />
+            ) : (
+              <Check size={20} strokeWidth={2.2} />
+            )}
+          </div>
+
+          <div>
+            <p className="ao-pending__title">
+              {hasPending
+                ? `${pluralize(count, "request")} pending`
+                : "All caught up"}
+            </p>
+            <p className="ao-pending__text">
+              {hasPending
+                ? "Waiting for Super Admin review."
+                : "No requests are waiting for review."}
+            </p>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CapacityCard({ totalMembers, sanghaCount }) {
+  const totalSeats = sanghaCount * SANGHA_CAPACITY;
+  const percent = totalSeats
+    ? Math.min(100, Math.round((totalMembers / totalSeats) * 100))
+    : 0;
+
+  return (
+    <section className="ao-card">
+      <header className="ao-card__header">
+        <h2>Membership Capacity</h2>
+      </header>
+
+      <p className="ao-capacity__figure">
+        <strong>{totalMembers}</strong> of {totalSeats} seats filled
+      </p>
+
+      <ProgressBar
+        value={percent}
+        max={100}
+        label="Total membership capacity"
+        large
+      />
+
+      <p className="ao-capacity__note">
+        Across {pluralize(sanghaCount, "sangha")}, up to {SANGHA_CAPACITY}{" "}
+        members each.
+      </p>
+    </section>
+  );
+}
+
+function SavingsSection({ savings, loading, failed }) {
+  const accounts = savings?.accounts ?? [];
+  const maxBalance = Math.max(1, ...accounts.map((a) => a.balance));
+
+  let body;
+  if (loading) {
+    body = <ChartMessage loading>Loading savings accounts...</ChartMessage>;
+  } else if (failed) {
+    body = <ChartMessage>Unable to load savings accounts.</ChartMessage>;
+  } else if (accounts.length === 0) {
+    body = (
+      <EmptyState
+        icon={PiggyBank}
+        title="No savings accounts yet"
+        text="Savings accounts created for your Sanghas will appear here."
+      />
+    );
+  } else {
+    body = (
+      <ul className="ao-balance-list">
+        {accounts.map((account) => (
+          <li key={account.sanghaId} className="ao-balance-row">
+            <div className="ao-balance-row__top">
+              <span className="ao-balance-row__name">{account.sanghaName}</span>
+              <strong>{formatINR(account.balance)}</strong>
+            </div>
+            <ProgressBar
+              value={account.balance}
+              max={maxBalance}
+              label={`${account.sanghaName} balance`}
+            />
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  return (
+    <FeatureSection
+      eyebrow="Financial Management"
+      title="Savings Accounts"
+      text="Current balance of each savings account under your Sanghas."
+      icon={PiggyBank}
+    >
+      {body}
+    </FeatureSection>
+  );
+}
+
+function LoanRequestsSection({ data, loading, failed }) {
+  const shared = { loading, failed };
+
+  return (
+    <FeatureSection
+      eyebrow="Loan Management"
+      title="Loan Requests"
+      text="Emergency fund requests raised by members of your Sanghas."
+      icon={HandCoins}
+    >
+      <div className="ao-feature-grid">
+        <SummaryCard
+          icon={HandCoins}
+          title="Total Requests"
+          value={data?.total ?? 0}
+          description={`${formatINR(data?.totalRequestedAmount)} requested`}
+          {...shared}
+        />
+        <SummaryCard
+          icon={ClipboardList}
+          title="Pending"
+          value={data?.pending ?? 0}
+          description="Waiting for review"
+          attention={(data?.pending ?? 0) > 0}
+          {...shared}
+        />
+        <SummaryCard
+          icon={Check}
+          title="Approved"
+          value={data?.approved ?? 0}
+          description="Approved so far"
+          {...shared}
+        />
+        <SummaryCard
+          icon={AlertCircle}
+          title="Rejected"
+          value={data?.rejected ?? 0}
+          description="Not approved"
+          {...shared}
+        />
+      </div>
+    </FeatureSection>
+  );
+}
+
+function LoanApprovalsSection({ data, loading, failed }) {
+  const shared = { loading, failed };
+
+  return (
+    <FeatureSection
+      eyebrow="Approval Management"
+      title="Loan Approvals"
+      text="Money approved, given out and paid back across your Sanghas."
+      icon={BadgeCheck}
+    >
+      <div className="ao-feature-grid">
+        <SummaryCard
+          icon={BadgeCheck}
+          title="Approved Amount"
+          value={formatINR(data?.approvedAmount)}
+          description="Total approved"
+          {...shared}
+        />
+        <SummaryCard
+          icon={HandCoins}
+          title="Given Out"
+          value={formatINR(data?.disbursedAmount)}
+          description="Sent to members"
+          {...shared}
+        />
+        <SummaryCard
+          icon={UserCheck}
+          title="Paid Back"
+          value={formatINR(data?.repaidAmount)}
+          description={`+ ${formatINR(data?.interestEarned)} interest`}
+          {...shared}
+        />
+        <SummaryCard
+          icon={AlertCircle}
+          title="Still Outstanding"
+          value={formatINR(data?.outstanding)}
+          description="Yet to be repaid"
+          attention={(data?.outstanding ?? 0) > 0}
+          {...shared}
+        />
+      </div>
+    </FeatureSection>
+  );
+}
+
+/* =========================================================
+   PAGE
 ========================================================= */
 
 export default function Overview() {
-  /* =======================================================
-     SANGHA DATA
-  ======================================================= */
+  const [selectedSangha, setSelectedSangha] = useState(""); // "" = all
 
-  const [sanghas, setSanghas] = useState([]);
-
-  const [sanghasLoading, setSanghasLoading] = useState(true);
-  const [sanghasFailed, setSanghasFailed] = useState(false);
-
-  /* =======================================================
-     ADMIN REQUEST DATA
-  ======================================================= */
-
-  const [pendingCount, setPendingCount] = useState(0);
-
-  const [pendingLoading, setPendingLoading] = useState(true);
-  const [pendingFailed, setPendingFailed] = useState(false);
-
-  /* =======================================================
-     SAVINGS DATA
-
-     These are intentionally kept ready for the real
-     Savings Account API.
-
-     We do NOT invent an endpoint here.
-  ======================================================= */
-
-  const [savingsAccounts, setSavingsAccounts] = useState([]);
-
-  const [savingsLoading, setSavingsLoading] = useState(false);
-  const [savingsFailed, setSavingsFailed] = useState(false);
-
-  /* =======================================================
-     LOAN REQUEST DATA
-
-     Ready for the existing Loan Request API.
-  ======================================================= */
-
-  const [loanRequests, setLoanRequests] = useState([]);
-
-  const [loanRequestsLoading, setLoanRequestsLoading] =
-    useState(false);
-
-  const [loanRequestsFailed, setLoanRequestsFailed] =
-    useState(false);
-
-  /* =======================================================
-     LOAN APPROVAL DATA
-
-     Ready for the existing Loan Approval API.
-  ======================================================= */
-
-  const [loanApprovals, setLoanApprovals] = useState([]);
-
-  const [loanApprovalsLoading, setLoanApprovalsLoading] =
-    useState(false);
-
-  const [loanApprovalsFailed, setLoanApprovalsFailed] =
-    useState(false);
-
-  /* =======================================================
-     FETCH CURRENT ADMIN'S SANGHAS
-  ======================================================= */
-
-  useEffect(() => {
-    api
-      .get("/sanghas")
-      .then((res) => {
-        const data = Array.isArray(res.data)
-          ? res.data
-          : [];
-
-        setSanghas(data);
-      })
-      .catch(() => {
-        setSanghasFailed(true);
-      })
-      .finally(() => {
-        setSanghasLoading(false);
-      });
-  }, []);
-
-  /* =======================================================
-     FETCH PENDING ADMIN REQUEST COUNT
-  ======================================================= */
-
-  useEffect(() => {
-    api
-      .get("/admin-requests/pending-count")
-      .then((res) => {
-        setPendingCount(
-          res.data?.pending_count ?? 0
-        );
-      })
-      .catch(() => {
-        setPendingFailed(true);
-      })
-      .finally(() => {
-        setPendingLoading(false);
-      });
-  }, []);
-
-  /* =======================================================
-     DERIVED SANGHA DATA
-  ======================================================= */
-
-  const totalMembers = sanghas.reduce(
-    (sum, sangha) =>
-      sum +
-      Number(
-        sangha.membersCount ??
-          sangha.members_count ??
-          0
-      ),
-    0
+  const sanghasQuery = useApiData("/sanghas", (d) =>
+    Array.isArray(d) ? d : [],
   );
-
-  const totalSeats =
-    sanghas.length * SANGHA_CAPACITY;
-
-  const availableSeats = Math.max(
-    totalSeats - totalMembers,
-    0
+  const pendingQuery = useApiData(
+    "/admin-requests/pending-count",
+    (d) => d?.pending_count ?? 0,
   );
+  const financeQuery = useAdminOverview(selectedSangha);
 
-  const filledPercent = totalSeats
-    ? Math.min(
-        100,
-        Math.round(
-          (totalMembers / totalSeats) * 100
-        )
-      )
-    : 0;
+  const sanghas = sanghasQuery.data ?? [];
+  const pendingCount = pendingQuery.data ?? 0;
+  const finance = financeQuery.data;
 
-  const fullSanghas = sanghas.filter((sangha) => {
-    const count =
-      sangha.membersCount ??
-      sangha.members_count ??
-      0;
+  /* ---- derived values ---- */
+  const totalMembers = sanghas.reduce((sum, s) => sum + getMembersCount(s), 0);
+  const totalSeats = sanghas.length * SANGHA_CAPACITY;
+  const availableSeats = Math.max(totalSeats - totalMembers, 0);
+  const fullSanghas = sanghas.filter(
+    (s) => getMembersCount(s) >= SANGHA_CAPACITY,
+  ).length;
 
-    return count >= SANGHA_CAPACITY;
-  }).length;
+  const weekly = finance?.weekly ?? [];
+  const thisWeek = weekly[weekly.length - 1];
 
-  const availableSanghas =
-    sanghas.length - fullSanghas;
+  const scopeName =
+    sanghas.find((s) => String(s.id) === String(selectedSangha))?.name ||
+    "All sanghas";
 
-  /* =======================================================
-     MEMBERSHIP CHART DATA
-  ======================================================= */
-
-  const membershipChartData = sanghas.map(
-    (sangha) => ({
-      name: sangha.name,
-      members:
-        Number(
-          sangha.membersCount ??
-            sangha.members_count ??
-            0
-        ),
-    })
-  );
-
-  /* =======================================================
-     SAVINGS DERIVED DATA
-
-     Will automatically work once real savings data
-     is connected.
-  ======================================================= */
-
-  const totalSavingsAccounts =
-    savingsAccounts.length;
-
-  const totalSavingsBalance =
-    savingsAccounts.reduce(
-      (sum, account) =>
-        sum +
-        Number(
-          account.bank_balance ??
-            account.bankBalance ??
-            account.balance ??
-            0
-        ),
-      0
-    );
-
-  /* =======================================================
-     LOAN DERIVED DATA
-  ======================================================= */
-
-  const totalLoanRequests =
-    loanRequests.length;
-
-  const pendingLoanRequests =
-    loanRequests.filter((loan) => {
-      const status = String(
-        loan.status ?? ""
-      ).toLowerCase();
-
-      return status === "pending";
-    }).length;
-
-  const approvedLoanRequests =
-    loanRequests.filter((loan) => {
-      const status = String(
-        loan.status ?? ""
-      ).toLowerCase();
-
-      return status === "approved";
-    }).length;
-
-  const rejectedLoanRequests =
-    loanRequests.filter((loan) => {
-      const status = String(
-        loan.status ?? ""
-      ).toLowerCase();
-
-      return status === "rejected";
-    }).length;
-
-  /* =======================================================
-     LOAN APPROVAL DERIVED DATA
-  ======================================================= */
-
-  const totalLoanApprovals =
-    loanApprovals.length;
-
-  const pendingApprovals =
-    loanApprovals.filter((loan) => {
-      const status = String(
-        loan.status ?? ""
-      ).toLowerCase();
-
-      return status === "pending";
-    }).length;
-
-  const approvedLoans =
-    loanApprovals.filter((loan) => {
-      const status = String(
-        loan.status ?? ""
-      ).toLowerCase();
-
-      return status === "approved";
-    }).length;
-
-  const rejectedLoans =
-    loanApprovals.filter((loan) => {
-      const status = String(
-        loan.status ?? ""
-      ).toLowerCase();
-
-      return status === "rejected";
-    }).length;
-
-  /* =======================================================
-     USER / HEADER
-  ======================================================= */
-
-  const storedUser = getStoredUser();
-
-  const firstName = (
-    storedUser.fullname || ""
-  )
-    .trim()
-    .split(" ")[0];
-
-  const greeting = getGreeting();
+  const firstName = (getStoredUser().fullname || "").trim().split(" ")[0];
 
   let sanghaLine = "";
-
-  if (
-    !sanghasLoading &&
-    !sanghasFailed
-  ) {
-    if (sanghas.length === 1) {
-      sanghaLine = sanghas[0].name;
-    } else if (sanghas.length > 1) {
+  if (!sanghasQuery.loading && !sanghasQuery.failed) {
+    if (sanghas.length === 1) sanghaLine = sanghas[0].name;
+    else if (sanghas.length > 1)
       sanghaLine = `Managing ${sanghas.length} sanghas`;
-    } else {
-      sanghaLine =
-        "No sanghas assigned yet";
-    }
+    else sanghaLine = "No sanghas assigned yet";
   }
 
-  /* =======================================================
-     RENDER
-  ======================================================= */
+  const anyFailed =
+    sanghasQuery.failed || pendingQuery.failed || financeQuery.failed;
+
+  const financeProps = {
+    loading: financeQuery.loading,
+    failed: financeQuery.failed,
+  };
 
   return (
     <div className="sa-page ao-page">
+      <Header
+        greeting={getGreeting()}
+        firstName={firstName}
+        sanghaLine={sanghaLine}
+      />
 
-      {/* ===================================================
-          HEADER
-      =================================================== */}
-
-      <header className="ao-header">
-        <p className="ao-header__eyebrow">
-          Admin Dashboard
-        </p>
-
-        <h1 className="ao-header__title">
-          {greeting}
-          {firstName
-            ? `, ${firstName}`
-            : ""}
-        </h1>
-
-        {sanghaLine && (
-          <p className="ao-header__sub">
-            <Building2
-              size={15}
-              strokeWidth={2}
-            />
-
-            <span>
-              {sanghaLine}
-            </span>
-          </p>
-        )}
-      </header>
-
-      {/* ===================================================
-          GLOBAL ALERT
-      =================================================== */}
-
-      {(sanghasFailed ||
-        pendingFailed ||
-        savingsFailed ||
-        loanRequestsFailed ||
-        loanApprovalsFailed) && (
-        <div
-          className="ao-alert"
-          role="alert"
-        >
-          <AlertCircle
-            size={16}
-            strokeWidth={2}
-          />
-
+      {anyFailed && (
+        <div className="ao-alert" role="alert">
+          <AlertCircle size={16} strokeWidth={2} />
           <span>
-            Some information couldn't be
-            loaded. Refresh the page to try
-            again.
+            Some information couldn't be loaded. Refresh the page to try again.
           </span>
         </div>
       )}
 
-      {/* ===================================================
-          TOP STATISTICS
-      =================================================== */}
-
-      <section
-        className="ao-stats"
-        aria-label="Overview statistics"
-      >
-
+      {/* Top statistics */}
+      <section className="ao-stats" aria-label="Overview statistics">
         <StatTile
           icon={Building2}
           label="Sanghas Managed"
           value={sanghas.length}
-          loading={sanghasLoading}
-          failed={sanghasFailed}
+          loading={sanghasQuery.loading}
+          failed={sanghasQuery.failed}
         />
-
         <StatTile
           icon={Users}
           label="Total Members"
           value={totalMembers}
-          loading={sanghasLoading}
-          failed={sanghasFailed}
+          loading={sanghasQuery.loading}
+          failed={sanghasQuery.failed}
         />
-
         <StatTile
           icon={PiggyBank}
           label="Savings Accounts"
-          value={totalSavingsAccounts}
-          loading={savingsLoading}
-          failed={savingsFailed}
+          value={finance?.savings?.accountsCount ?? 0}
+          loading={financeQuery.loading && !finance}
+          failed={financeQuery.failed}
         />
-
         <StatTile
           icon={ClipboardList}
           label="Pending Admin Requests"
           value={pendingCount}
-          loading={pendingLoading}
-          failed={pendingFailed}
-          attention={
-            pendingCount > 0
-          }
+          loading={pendingQuery.loading}
+          failed={pendingQuery.failed}
+          attention={pendingCount > 0}
         />
       </section>
 
-      {/* ===================================================
-          MEMBERSHIP CHART
-      =================================================== */}
+      <MembershipChart
+        sanghas={sanghas}
+        totalMembers={totalMembers}
+        loading={sanghasQuery.loading}
+        failed={sanghasQuery.failed}
+      />
 
-      <section className="ao-charts">
+      <SanghaFilter
+        sanghas={sanghas}
+        value={selectedSangha}
+        onChange={setSelectedSangha}
+      />
 
-        <div className="ao-chart-card">
+      <MoneyFlowChart weekly={weekly} scopeName={scopeName} {...financeProps} />
 
-          <div className="ao-chart-card__header">
-
-            <div>
-              <p className="ao-chart-card__eyebrow">
-                Membership
-              </p>
-
-              <h2>
-                Sangha Members
-              </h2>
-            </div>
-
-            <div className="ao-chart-card__badge">
-              <Users size={16} />
-
-              <span>
-                {totalMembers} members
-              </span>
-            </div>
-
-          </div>
-
-          {sanghasLoading ? (
-            <div className="ao-chart-loading">
-              Loading membership chart...
-            </div>
-          ) : sanghasFailed ? (
-            <div className="ao-chart-empty">
-              Unable to load membership data.
-            </div>
-          ) : sanghas.length === 0 ? (
-            <div className="ao-chart-empty">
-              No Sangha data available.
-            </div>
-          ) : (
-            <div className="ao-chart">
-
-              <ResponsiveContainer
-                width="100%"
-                height={300}
-              >
-                <BarChart
-                  data={
-                    membershipChartData
-                  }
-                  margin={{
-                    top: 10,
-                    right: 10,
-                    left: 0,
-                    bottom: 10,
-                  }}
-                >
-
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    vertical={false}
-                  />
-
-                  <XAxis
-                    dataKey="name"
-                    tick={{
-                      fontSize: 12,
-                    }}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-
-                  <YAxis
-                    allowDecimals={false}
-                    domain={[
-                      0,
-                      SANGHA_CAPACITY,
-                    ]}
-                    tick={{
-                      fontSize: 12,
-                    }}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-
-                  <Tooltip
-                    cursor={{
-                      opacity: 0.08,
-                    }}
-                    formatter={(
-                      value
-                    ) => [
-                      `${value} members`,
-                      "Members",
-                    ]}
-                  />
-
-                  <Bar
-                    dataKey="members"
-                    name="Members"
-                    radius={[
-                      6,
-                      6,
-                      0,
-                      0,
-                    ]}
-                    maxBarSize={55}
-                  />
-
-                </BarChart>
-              </ResponsiveContainer>
-
-            </div>
-          )}
-
-        </div>
-
-      </section>
-
-      {/* ===================================================
-          SUMMARY CARDS
-      =================================================== */}
-
+      {/* Summary cards */}
       <section className="ao-summary-grid">
-
-        {/* MEMBERSHIP */}
-
         <SummaryCard
           icon={Users}
           title="Available Seats"
-          value={
-            sanghasLoading
-              ? "—"
-              : availableSeats
-          }
-          description={
-            sanghasLoading
-              ? ""
-              : `Across ${sanghas.length} sangha${
-                  sanghas.length === 1
-                    ? ""
-                    : "s"
-                }`
-          }
-          loading={sanghasLoading}
-          failed={sanghasFailed}
+          value={availableSeats}
+          description={`Across ${pluralize(sanghas.length, "sangha")}`}
+          loading={sanghasQuery.loading}
+          failed={sanghasQuery.failed}
         />
-
-        {/* FULL SANGHAS */}
-
         <SummaryCard
           icon={Building2}
           title="Full Sanghas"
-          value={
-            sanghasLoading
-              ? "—"
-              : fullSanghas
-          }
-          description={
-            sanghasLoading
-              ? ""
-              : `${availableSanghas} with available seats`
-          }
-          loading={sanghasLoading}
-          failed={sanghasFailed}
+          value={fullSanghas}
+          description={`${sanghas.length - fullSanghas} with available seats`}
+          loading={sanghasQuery.loading}
+          failed={sanghasQuery.failed}
         />
-
-        {/* SAVINGS */}
-
         <SummaryCard
           icon={PiggyBank}
           title="Savings Balance"
-          value={
-            savingsAccounts.length === 0
-              ? "₹0"
-              : `₹${totalSavingsBalance.toLocaleString(
-                  "en-IN"
-                )}`
-          }
-          description="Total recorded balance"
-          loading={savingsLoading}
-          failed={savingsFailed}
+          value={formatINR(finance?.savings?.totalBalance)}
+          description={scopeName}
+          {...financeProps}
         />
-
-        {/* LOANS */}
-
         <SummaryCard
           icon={HandCoins}
-          title="Loan Requests"
-          value={
-            totalLoanRequests
-          }
-          description={`${pendingLoanRequests} pending`}
-          loading={
-            loanRequestsLoading
-          }
-          failed={
-            loanRequestsFailed
-          }
-          attention={
-            pendingLoanRequests > 0
-          }
+          title="This Week's Transactions"
+          value={formatINR(thisWeek?.total)}
+          description={`In ${formatINR(thisWeek?.moneyIn)} · Out ${formatINR(
+            thisWeek?.moneyOut,
+          )}`}
+          {...financeProps}
         />
-
       </section>
 
-      {/* ===================================================
-          MAIN CONTENT
-      =================================================== */}
-
+      {/* Sanghas and requests */}
       <div className="ao-grid">
-
-        {/* =================================================
-            YOUR SANGHAS
-        ================================================= */}
-
-        <section className="ao-card">
-
-          <header className="ao-card__header">
-
-            <h2>
-              Your Sanghas
-            </h2>
-
-            {!sanghasLoading &&
-              !sanghasFailed && (
-                <span className="ao-card__count">
-                  {sanghas.length}
-                </span>
-              )}
-
-          </header>
-
-          {sanghasLoading ? (
-
-            <ul className="ao-list">
-
-              {[0, 1, 2].map(
-                (i) => (
-                  <li
-                    key={i}
-                    className="ao-sangha"
-                  >
-
-                    <div className="ao-sangha__main">
-
-                      <span className="ao-skeleton ao-skeleton--line" />
-
-                      <span className="ao-skeleton ao-skeleton--line ao-skeleton--short" />
-
-                    </div>
-
-                    <span className="ao-skeleton ao-skeleton--line" />
-
-                  </li>
-                )
-              )}
-
-            </ul>
-
-          ) : sanghasFailed ? (
-
-            <p className="ao-empty__text">
-              Your sanghas couldn't
-              be loaded.
-            </p>
-
-          ) : sanghas.length === 0 ? (
-
-            <div className="ao-empty">
-
-              <div className="ao-empty__icon">
-                <Building2
-                  size={22}
-                  strokeWidth={1.8}
-                />
-              </div>
-
-              <p className="ao-empty__title">
-                No sanghas yet
-              </p>
-
-              <p className="ao-empty__text">
-                Sanghas you manage
-                will appear here.
-              </p>
-
-            </div>
-
-          ) : (
-
-            <ul className="ao-list">
-
-              {sanghas.map(
-                (sangha) => {
-
-                  const count =
-                    sangha.membersCount ??
-                    sangha.members_count ??
-                    0;
-
-                  const pct =
-                    Math.min(
-                      100,
-                      Math.round(
-                        (count /
-                          SANGHA_CAPACITY) *
-                          100
-                      )
-                    );
-
-                  const isFull =
-                    count >=
-                    SANGHA_CAPACITY;
-
-                  const meta = [
-                    sangha.code,
-                    sangha.subadmin_name
-                      ? `Subadmin: ${sangha.subadmin_name}`
-                      : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ");
-
-                  return (
-                    <li
-                      key={sangha.id}
-                      className="ao-sangha"
-                    >
-
-                      <div className="ao-sangha__main">
-
-                        <span className="ao-sangha__name">
-                          {sangha.name}
-                        </span>
-
-                        {meta && (
-                          <span className="ao-sangha__meta">
-                            {meta}
-                          </span>
-                        )}
-
-                      </div>
-
-                      <div className="ao-sangha__capacity">
-
-                        <div className="ao-sangha__count">
-
-                          <span>
-                            {count} /{" "}
-                            {SANGHA_CAPACITY}{" "}
-                            members
-                          </span>
-
-                          {isFull && (
-                            <span className="ao-tag">
-                              Full
-                            </span>
-                          )}
-
-                        </div>
-
-                        <div
-                          className="ao-bar"
-                          role="progressbar"
-                          aria-label={`${sangha.name} membership`}
-                          aria-valuemin={0}
-                          aria-valuemax={
-                            SANGHA_CAPACITY
-                          }
-                          aria-valuenow={Math.min(
-                            count,
-                            SANGHA_CAPACITY
-                          )}
-                        >
-
-                          <div
-                            className={`ao-bar__fill ${
-                              isFull
-                                ? "ao-bar__fill--full"
-                                : ""
-                            }`}
-                            style={{
-                              width: `${pct}%`,
-                            }}
-                          />
-
-                        </div>
-
-                      </div>
-
-                    </li>
-                  );
-                }
-              )}
-
-            </ul>
-          )}
-
-        </section>
-
-        {/* =================================================
-            RIGHT SIDE
-        ================================================= */}
+        <SanghaList
+          sanghas={sanghas}
+          loading={sanghasQuery.loading}
+          failed={sanghasQuery.failed}
+        />
 
         <div className="ao-side">
+          <PendingRequestsCard
+            count={pendingCount}
+            loading={pendingQuery.loading}
+            failed={pendingQuery.failed}
+          />
 
-          {/* ===============================================
-              ADMIN REQUESTS
-          =============================================== */}
-
-          <section className="ao-card">
-
-            <header className="ao-card__header">
-
-              <h2>
-                Pending Requests
-              </h2>
-
-            </header>
-
-            {pendingLoading ? (
-
-              <span className="ao-skeleton ao-skeleton--line" />
-
-            ) : pendingFailed ? (
-
-              <p className="ao-empty__text">
-                Request status
-                couldn't be loaded.
-              </p>
-
-            ) : (
-
-              <div className="ao-pending">
-
-                <div
-                  className={`ao-pending__icon ${
-                    pendingCount > 0
-                      ? "ao-pending__icon--attention"
-                      : ""
-                  }`}
-                >
-
-                  {pendingCount > 0 ? (
-                    <ClipboardList
-                      size={20}
-                      strokeWidth={2}
-                    />
-                  ) : (
-                    <Check
-                      size={20}
-                      strokeWidth={2.2}
-                    />
-                  )}
-
-                </div>
-
-                <div>
-
-                  <p className="ao-pending__title">
-
-                    {pendingCount > 0
-                      ? `${pendingCount} request${
-                          pendingCount ===
-                          1
-                            ? ""
-                            : "s"
-                        } pending`
-                      : "All caught up"}
-
-                  </p>
-
-                  <p className="ao-pending__text">
-
-                    {pendingCount > 0
-                      ? "Waiting for Super Admin review."
-                      : "No requests are waiting for review."}
-
-                  </p>
-
-                </div>
-
-              </div>
-            )}
-
-          </section>
-
-          {/* ===============================================
-              MEMBERSHIP CAPACITY
-          =============================================== */}
-
-          {!sanghasLoading &&
-            !sanghasFailed &&
+          {!sanghasQuery.loading &&
+            !sanghasQuery.failed &&
             sanghas.length > 0 && (
-
-              <section className="ao-card">
-
-                <header className="ao-card__header">
-
-                  <h2>
-                    Membership Capacity
-                  </h2>
-
-                </header>
-
-                <p className="ao-capacity__figure">
-
-                  <strong>
-                    {totalMembers}
-                  </strong>{" "}
-                  of {totalSeats} seats
-                  filled
-
-                </p>
-
-                <div
-                  className="ao-bar ao-bar--lg"
-                  role="progressbar"
-                  aria-label="Total membership capacity"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={
-                    filledPercent
-                  }
-                >
-
-                  <div
-                    className="ao-bar__fill"
-                    style={{
-                      width: `${filledPercent}%`,
-                    }}
-                  />
-
-                </div>
-
-                <p className="ao-capacity__note">
-
-                  Across{" "}
-                  {sanghas.length}{" "}
-                  sangha
-                  {sanghas.length ===
-                  1
-                    ? ""
-                    : "s"}
-                  , up to{" "}
-                  {SANGHA_CAPACITY}{" "}
-                  members each.
-
-                </p>
-
-              </section>
+              <CapacityCard
+                totalMembers={totalMembers}
+                sanghaCount={sanghas.length}
+              />
             )}
-
         </div>
       </div>
 
-      {/* ===================================================
-          SAVINGS ACCOUNT SECTION
-      =================================================== */}
-
-      <section className="ao-feature-section">
-
-        <div className="ao-feature-section__header">
-
-          <div>
-            <p className="ao-chart-card__eyebrow">
-              Financial Management
-            </p>
-
-            <h2>
-              Savings Accounts
-            </h2>
-
-            <p>
-              Monitor savings accounts
-              created for your Sanghas.
-            </p>
-          </div>
-
-          <div className="ao-feature-icon">
-            <PiggyBank
-              size={22}
-            />
-          </div>
-
-        </div>
-
-        <div className="ao-feature-grid">
-
-          <SummaryCard
-            icon={PiggyBank}
-            title="Total Accounts"
-            value={
-              totalSavingsAccounts
-            }
-            description="Created savings accounts"
-            loading={
-              savingsLoading
-            }
-            failed={
-              savingsFailed
-            }
-          />
-
-          <SummaryCard
-            icon={PiggyBank}
-            title="Total Balance"
-            value={`₹${totalSavingsBalance.toLocaleString(
-              "en-IN"
-            )}`}
-            description="Current recorded balance"
-            loading={
-              savingsLoading
-            }
-            failed={
-              savingsFailed
-            }
-          />
-
-        </div>
-
-        <div className="ao-feature-empty">
-
-          <PiggyBank
-            size={24}
-            strokeWidth={1.8}
-          />
-
-          <div>
-            <strong>
-              Savings Account
-              chart ready
-            </strong>
-
-            <p>
-              Connect this section to
-              your existing Savings
-              Account API to display
-              each Sangha's balance.
-            </p>
-          </div>
-
-        </div>
-
-      </section>
-
-      {/* ===================================================
-          LOAN REQUEST SECTION
-      =================================================== */}
-
-      <section className="ao-feature-section">
-
-        <div className="ao-feature-section__header">
-
-          <div>
-            <p className="ao-chart-card__eyebrow">
-              Loan Management
-            </p>
-
-            <h2>
-              Loan Requests
-            </h2>
-
-            <p>
-              Track loan requests from
-              your Sangha members.
-            </p>
-          </div>
-
-          <div className="ao-feature-icon">
-            <HandCoins
-              size={22}
-            />
-          </div>
-
-        </div>
-
-        <div className="ao-feature-grid">
-
-          <SummaryCard
-            icon={HandCoins}
-            title="Total Requests"
-            value={
-              totalLoanRequests
-            }
-            description="All loan requests"
-            loading={
-              loanRequestsLoading
-            }
-            failed={
-              loanRequestsFailed
-            }
-          />
-
-          <SummaryCard
-            icon={ClipboardList}
-            title="Pending"
-            value={
-              pendingLoanRequests
-            }
-            description="Waiting for review"
-            loading={
-              loanRequestsLoading
-            }
-            failed={
-              loanRequestsFailed
-            }
-            attention={
-              pendingLoanRequests >
-              0
-            }
-          />
-
-          <SummaryCard
-            icon={Check}
-            title="Approved"
-            value={
-              approvedLoanRequests
-            }
-            description="Approved requests"
-            loading={
-              loanRequestsLoading
-            }
-            failed={
-              loanRequestsFailed
-            }
-          />
-
-          <SummaryCard
-            icon={AlertCircle}
-            title="Rejected"
-            value={
-              rejectedLoanRequests
-            }
-            description="Rejected requests"
-            loading={
-              loanRequestsLoading
-            }
-            failed={
-              loanRequestsFailed
-            }
-          />
-
-        </div>
-
-      </section>
-
-      {/* ===================================================
-          LOAN APPROVAL SECTION
-      =================================================== */}
-
-      <section className="ao-feature-section">
-
-        <div className="ao-feature-section__header">
-
-          <div>
-            <p className="ao-chart-card__eyebrow">
-              Approval Management
-            </p>
-
-            <h2>
-              Loan Approvals
-            </h2>
-
-            <p>
-              Monitor the status of loan
-              approval activity.
-            </p>
-          </div>
-
-          <div className="ao-feature-icon">
-            <BadgeCheck
-              size={22}
-            />
-          </div>
-
-        </div>
-
-        <div className="ao-feature-grid">
-
-          <SummaryCard
-            icon={BadgeCheck}
-            title="Total Approvals"
-            value={
-              totalLoanApprovals
-            }
-            description="Approval records"
-            loading={
-              loanApprovalsLoading
-            }
-            failed={
-              loanApprovalsFailed
-            }
-          />
-
-          <SummaryCard
-            icon={ClipboardList}
-            title="Pending Approval"
-            value={
-              pendingApprovals
-            }
-            description="Waiting for decision"
-            loading={
-              loanApprovalsLoading
-            }
-            failed={
-              loanApprovalsFailed
-            }
-            attention={
-              pendingApprovals >
-              0
-            }
-          />
-
-          <SummaryCard
-            icon={UserCheck}
-            title="Approved"
-            value={
-              approvedLoans
-            }
-            description="Approved loans"
-            loading={
-              loanApprovalsLoading
-            }
-            failed={
-              loanApprovalsFailed
-            }
-          />
-
-          <SummaryCard
-            icon={AlertCircle}
-            title="Rejected"
-            value={
-              rejectedLoans
-            }
-            description="Rejected loans"
-            loading={
-              loanApprovalsLoading
-            }
-            failed={
-              loanApprovalsFailed
-            }
-          />
-
-        </div>
-
-      </section>
-
+      <SavingsSection savings={finance?.savings} {...financeProps} />
+      <LoanRequestsSection data={finance?.loanRequests} {...financeProps} />
+      <LoanApprovalsSection data={finance?.loanApprovals} {...financeProps} />
     </div>
   );
 }

@@ -38,6 +38,9 @@ const PAGES = {
 
 const AdminDashboard = () => {
   const [activePage, setActivePage] = useState("overview");
+  const [user, setUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("user") || "{}"); } catch { return {}; }
+  });
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -93,6 +96,7 @@ const AdminDashboard = () => {
       />
       <div className="sa-shell__main">
         <Topbar
+          user={user}
           onLogout={handleLogout}
           notificationCount={pendingCount}
           onNotificationsClick={() => navigateToPage("fund-requests")}
@@ -104,6 +108,7 @@ const AdminDashboard = () => {
           <ActivePageComponent
             onChanged={refreshPendingCount}
             onLogout={activePage === "settings" ? handleLogout : undefined}
+            onProfileUpdated={setUser}
           />
         </main>
       </div>

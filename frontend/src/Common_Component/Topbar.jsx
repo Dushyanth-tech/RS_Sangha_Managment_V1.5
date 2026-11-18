@@ -1,5 +1,6 @@
 import React from "react";
 import { Search, Bell, LogOut, Menu, X } from "lucide-react";
+import DownloadReportsButton from "./DownloadReportsButton";
 import "./Topbar.css";
 
 // Same localStorage structure as before, with a safe fallback for missing/invalid data
@@ -13,12 +14,13 @@ const readUser = () => {
 
 export default function Topbar({
   onLogout,
+  user: providedUser,
   notificationCount = 0,
   onNotificationsClick,
   onMenuClick,
   menuOpen = false,
 }) {
-  const user = readUser();
+  const user = providedUser || readUser();
   const fullname = user.fullname || "";
   const initial = fullname ? fullname.charAt(0).toUpperCase() : "?";
 
@@ -44,6 +46,8 @@ export default function Topbar({
           aria-label="Search admins, sanghas, members"
         />
       </div>
+
+      <DownloadReportsButton />
 
       <button
         type="button"

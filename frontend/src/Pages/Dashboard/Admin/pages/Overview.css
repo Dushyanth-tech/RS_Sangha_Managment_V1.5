@@ -1354,3 +1354,74 @@
     animation: none;
   }
 }
+
+/* =========================================================
+   MONEY FLOW CHART, SANGHA FILTER, SAVINGS BREAKDOWN
+   (append to the end of Overview.css)
+   ========================================================= */
+
+.ao-chart-card__sub {
+  margin: 4px 0 0;
+  color: #6b7186;
+  font-size: 13px;
+}
+
+.ao-chart-note {
+  margin: 12px 0 0;
+  color: #6b7186;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.ao-filter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  color: #4a5068;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ao-select {
+  padding: 8px 12px;
+  border: 1px solid #dcdff0;
+  border-radius: 10px;
+  background: #fff;
+  color: #252a3a;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.ao-select:focus-visible {
+  outline: 2px solid #4f46a5;
+  outline-offset: 2px;
+}
+
+.ao-balance-list {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ao-balance-row__top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.ao-balance-row__name {
+  color: #4a5068;
+  font-weight: 600;
+}
+
+.ao-balance-row__top strong {
+  color: #202436;
+  font-variant-numeric: tabular-nums;
+}

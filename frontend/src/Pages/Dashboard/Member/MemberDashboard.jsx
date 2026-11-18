@@ -24,7 +24,6 @@ import ProfileWizard from "./pages/ProfileWizard";
 import MySangha from "./pages/MySangha";
 import MyPayments from "./pages/MyPayments";
 import SanghaSavings from "./pages/SanghaSavings";
-import Loans from "./pages/Loans";
 import SettingsPage from "./pages/SettingsPage";
 import HelpSupport from "./pages/HelpSupport";
 import Notifications from "./pages/Notifications";
@@ -36,7 +35,6 @@ const NAV_ITEMS = [
   { key: "home", label: "Home", icon: House },
   { key: "payments", label: "My Payments", icon: Wallet },
   { key: "savings", label: "Sangha Savings", icon: Landmark },
-  { key: "loans", label: "Loans", icon: CreditCard },
   { key: "notifications", label: "Notifications", icon: Bell },
 ];
 
@@ -47,6 +45,7 @@ export default function MemberDashboard() {
   const [page, setPage] = useState(() =>
     location.state?.completeProfile ? "profile" : "home",
   );
+  const [openSavingsRequest, setOpenSavingsRequest] = useState(false);
   const [sanghasName, setSanghasName] = useState("");
   const [showAccountStatus, setShowAccountStatus] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -182,7 +181,8 @@ export default function MemberDashboard() {
     .toUpperCase();
 
   // Navigation
-  const handleNavigation = (selectedPage) => {
+  const handleNavigation = (selectedPage, options = {}) => {
+    setOpenSavingsRequest(Boolean(options.openRequest));
     setPage(selectedPage);
     setMenuOpen(false);
     setMobileMenuOpen(false);
@@ -196,8 +196,12 @@ export default function MemberDashboard() {
   const PAGES = {
     home: () => <HomePage user={user} onNavigate={handleNavigation} />,
     payments: () => <MyPayments />,
-    savings: () => <SanghaSavings />,
-    loans: () => <Loans />,
+    savings: () => (
+      <SanghaSavings
+        openRequest={openSavingsRequest}
+        onRequestOpened={() => setOpenSavingsRequest(false)}
+      />
+    ),
     settings: () => (
       <SettingsPage
         user={user}

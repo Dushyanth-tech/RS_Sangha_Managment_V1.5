@@ -1,7 +1,8 @@
 import { useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../../api/axiosInstance";
-import GoogleSignInButton from "./GoogleSignInButton";
+import PasswordResetModal from "../../Common_Component/PasswordResetModal";
+// import GoogleSignInButton from "./GoogleSignInButton";
 import "./AuthPage.css";
 import decorImage from "../../assets/buddha-sunset.png";
 /* ---------- tiny inline icons (no external icon lib needed) ---------- */
@@ -96,6 +97,7 @@ export default function AuthPage() {
   const [signupError, setSignupError] = useState("");
   const [signupLoading, setSignupLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [passwordResetOpen, setPasswordResetOpen] = useState(false);
 
   const navigateToRoleDashboard = useCallback((user, onboardingRequired = false) => {
     const rolePath = {
@@ -272,9 +274,9 @@ export default function AuthPage() {
                   <input type="checkbox" />
                   <span>Remember me</span>
                 </label>
-                <a href="#forgot" className="auth__link">
+                <button type="button" className="auth__link" onClick={() => setPasswordResetOpen(true)}>
                   Forgot password?
-                </a>
+                </button>
               </div>
 
               {loginError && <p className="auth__error">{loginError}</p>}
@@ -291,11 +293,11 @@ export default function AuthPage() {
                 <span>or</span>
               </div>
 
-              <GoogleSignInButton
+              {/* <GoogleSignInButton
                 mode="login"
                 onCredential={handleGoogleCredential}
                 disabled={googleLoading}
-              />
+              /> */}
               {googleLoading && <p className="auth__google-status" role="status">Signing in with Google…</p>}
 
               <p className="auth__foot">
@@ -374,11 +376,11 @@ export default function AuthPage() {
                 <span>or</span>
               </div>
 
-              <GoogleSignInButton
+              {/* <GoogleSignInButton
                 mode="signup"
                 onCredential={handleGoogleCredential}
                 disabled={googleLoading}
-              />
+              /> */}
               {googleLoading && <p className="auth__google-status" role="status">Creating your account…</p>}
 
               <p className="auth__foot">
@@ -418,6 +420,17 @@ export default function AuthPage() {
           </ul>
         </div>
       </div>
+      {passwordResetOpen && (
+        <PasswordResetModal
+          phone=""
+          initialOtp=""
+          onClose={() => setPasswordResetOpen(false)}
+          onSuccess={() => {
+            setLogin((current) => ({ ...current, password: "" }));
+            setLoginError("");
+          }}
+        />
+      )}
     </div>
   );
 }

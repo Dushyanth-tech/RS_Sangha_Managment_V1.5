@@ -39,6 +39,15 @@ const dayShort = (iso) =>
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+// "YYYY-MM-DD" in the viewer's local time: the same calendar day the table shows (see formatAppDate).
+const toDateKey = (value) => {
+  if (!value) return null;
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
 const errorText = (err, fallback) => {
   if (err?.response?.status === 401) {
     return "Your session has expired. Please log in again.";
@@ -426,6 +435,8 @@ export default function MyPayments({ onNavigate }) {
 
   const [filter, setFilter] = useState("All");
   const [query, setQuery] = useState("");
+  const [fromDate, setFromDate] = useState(""); // "YYYY-MM-DD" or ""
+  const [toDate, setToDate] = useState("");
   const [modal, setModal] = useState(null); // { type: "contribution" | "interest" | "principal", ... }
 
   const load = useCallback(async () => {
@@ -509,12 +520,44 @@ export default function MyPayments({ onNavigate }) {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return payments.filter(
-      (p) =>
-        FILTER_TEST[filter](p) &&
-        (!q || p.ref.toLowerCase().includes(q) || p.type.toLowerCase().includes(q)),
-    );
-  }, [payments, filter, query]);
+    return payments.filter((p) => {
+      if (!FILTER_TEST[filter](p)) return false;
+      if (q && !(p.ref.toLowerCase().includes(q) || p.type.toLowerCase().includes(q))) return false;
+
+      if (fromDate || toDate) {
+        const day = toDateKey(p.date);
+        if (!day) return false;
+        if (fromDate && day < fromDate) return false;
+        if (toDate && day > toDate) return false;
+      }
+      return true;
+    });
+  }, [payments, filter, query, fromDate, toDate]);
+
+  /* ---------- date range (From / To) ---------- */
+  const today = toDateKey(new Date());
+  const hasDateFilter = Boolean(fromDate || toDate);
+
+  // keep the range valid even if a date is typed in by hand
+  const changeFrom = (value) => {
+    setFromDate(value);
+    if (value && toDate && value > toDate) setToDate(value);
+  };
+  const changeTo = (value) => {
+    setToDate(value);
+    if (value && fromDate && value < fromDate) setFromDate(value);
+  };
+  const clearDates = () => {
+    setFromDate("");
+    setToDate("");
+  };
+
+  const rangeText =
+    fromDate && toDate
+      ? `from ${fmtDate(fromDate)} to ${fmtDate(toDate)}`
+      : fromDate
+        ? `from ${fmtDate(fromDate)} till today`
+        : `up to ${fmtDate(toDate)}`;
 
   const downloadReceipt = (p) => {
     const text = [
@@ -812,18 +855,55 @@ export default function MyPayments({ onNavigate }) {
           ))}
         </div>
 
-        <label className="mp-field mp-search-field">
-          <span>Search</span>
-          <div className="mp-search">
-            <Search size={16} />
-            <input
-              type="search"
-              placeholder="Search by type or reference"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
+        <div className="mp-toolbar">
+          <label className="mp-field mp-search-field">
+            <span>Search</span>
+            <div className="mp-search">
+              <Search size={16} />
+              <input
+                type="search"
+                placeholder="Search by type or reference"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </div>
+          </label>
+
+          <div className="mp-dates" role="group" aria-label="Filter by date">
+            <label className="mp-field mp-date-field">
+              <span>From date</span>
+              <input
+                type="date"
+                value={fromDate}
+                max={toDate || today}
+                onChange={(e) => changeFrom(e.target.value)}
+              />
+            </label>
+
+            <label className="mp-field mp-date-field">
+              <span>To date</span>
+              <input
+                type="date"
+                value={toDate}
+                min={fromDate || undefined}
+                max={today}
+                onChange={(e) => changeTo(e.target.value)}
+              />
+            </label>
+
+            {hasDateFilter && (
+              <button type="button" className="mp-link mp-dates__clear" onClick={clearDates}>
+                <X size={14} /> Clear dates
+              </button>
+            )}
           </div>
-        </label>
+        </div>
+
+        {hasDateFilter && !loading && !histError && (
+          <p className="mp-range-note" role="status">
+            Showing {plural(filtered.length, "payment")} {rangeText}.
+          </p>
+        )}
 
         {loading ? (
           <Skel h={120} />

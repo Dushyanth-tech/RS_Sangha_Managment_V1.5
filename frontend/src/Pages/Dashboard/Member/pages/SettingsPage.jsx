@@ -17,6 +17,8 @@ import {
   UserRound,
 } from "lucide-react";
 import api from "../../../../api/axiosInstance";
+import PasswordResetModal from "../../../../Common_Component/PasswordResetModal";
+import { useTheme } from "../../../../Common_Component/ThemeContext";
 import {
   applySettingsPreferences,
   getSettingsPreferences,
@@ -35,6 +37,17 @@ const NOTIFICATION_OPTIONS = [
 
 const errorMessage = (error) =>
   error?.response?.data?.detail || error?.message || "Something went wrong. Please try again.";
+
+function maskPhone(phone) {
+  const value = String(phone || "");
+  const digitCount = (value.match(/\d/g) || []).length;
+  let digitIndex = 0;
+  return value.replace(/\d/g, (digit) => {
+    const masked = digitIndex < digitCount - 3;
+    digitIndex += 1;
+    return masked ? "X" : digit;
+  });
+}
 
 function readStoredUser() {
   try {
@@ -93,6 +106,7 @@ function SettingsSection({ id, icon: Icon, title, description, children }) {
 }
 
 export default function SettingsPage({ onLogout, onProfileUpdated, user }) {
+  const { theme, setTheme } = useTheme();
   const [storedUser, setStoredUser] = useState(() => user || readStoredUser());
   const role = String(storedUser.role || "member").toLowerCase();
   const [profile, setProfile] = useState(null);
@@ -105,12 +119,15 @@ export default function SettingsPage({ onLogout, onProfileUpdated, user }) {
   const [profileSaving, setProfileSaving] = useState(false);
   const [photo, setPhoto] = useState("");
   const [photoSaving, setPhotoSaving] = useState(false);
-  const [password, setPassword] = useState({
+  const [passwordForm, setPasswordForm] = useState({
     current_password: "",
     new_password: "",
     confirm_password: "",
   });
   const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordResetOpen, setPasswordResetOpen] = useState(false);
+  const [passwordResetPhone, setPasswordResetPhone] = useState("");
+  const [passwordResetOtp, setPasswordResetOtp] = useState("");
   const [preferences, setPreferences] = useState(null);
   const [preferencesSaving, setPreferencesSaving] = useState(false);
   const [preferencesError, setPreferencesError] = useState("");
@@ -118,6 +135,7 @@ export default function SettingsPage({ onLogout, onProfileUpdated, user }) {
   const [sanghasLoading, setSanghasLoading] = useState(true);
   const [sanghaDrafts, setSanghaDrafts] = useState({});
   const [sanghaError, setSanghaError] = useState("");
+  const [sanghaMessage, setSanghaMessage] = useState("");
   const [sanghaSaving, setSanghaSaving] = useState(null);
   const [formMessage, setFormMessage] = useState("");
   const [formError, setFormError] = useState("");
@@ -260,16 +278,47 @@ export default function SettingsPage({ onLogout, onProfileUpdated, user }) {
     event.preventDefault();
     setFormMessage("");
     setFormError("");
+    if (passwordForm.new_password !== passwordForm.confirm_password) {
+      setFormError("New password and confirmation do not match.");
+      return;
+    }
     setPasswordSaving(true);
     try {
-      await api.post("/me/settings/change-password", password);
-      setPassword({ current_password: "", new_password: "", confirm_password: "" });
+      await api.post("/me/settings/change-password", passwordForm);
+      setPasswordForm({ current_password: "", new_password: "", confirm_password: "" });
       setFormMessage("Your password was changed.");
     } catch (error) {
       setFormError(errorMessage(error));
     } finally {
       setPasswordSaving(false);
     }
+  };
+
+  const updateAppearance = (field, value) => {
+    if (field === "theme") {
+      setTheme(value);
+      setAppearanceMessage(`${value === "dark" ? "Dark" : "Light"} theme applied and saved.`);
+      return;
+    }
+    const next = { ...appearance, [field]: value };
+    setAppearance(next);
+    applySettingsPreferences(next);
+  };
+
+  const openPasswordReset = () => {
+    const phoneNumber = profile?.profile?.phone || storedUser.phone || "";
+    if (!phoneNumber) {
+      setFormError("A registered phone number is required. Add one to your profile before resetting your password.");
+      return;
+    }
+    const generatedOtp = String(Math.floor(100000 + Math.random() * 900000));
+    setFormError("");
+    setPasswordResetPhone(phoneNumber);
+    setPasswordResetOtp(generatedOtp);
+    setPasswordResetOpen(true);
+    window.setTimeout(() => {
+      window.alert(`Development OTP for ${maskPhone(phoneNumber)}: ${generatedOtp}`);
+    }, 0);
   };
 
   const saveNotifications = async () => {
@@ -299,12 +348,14 @@ export default function SettingsPage({ onLogout, onProfileUpdated, user }) {
 
   const saveSangha = async (sangha) => {
     setSanghaError("");
+    setSanghaMessage("");
     setSanghaSaving(sangha.id);
     const draft = sanghaDrafts[sangha.id];
     const changed = Object.fromEntries(
       Object.entries(draft).filter(([field, value]) => value !== (sangha[field] || "")),
     );
     if (!Object.keys(changed).length) {
+      setSanghaMessage("Sangha details are already up to date.");
       setSanghaSaving(null);
       return;
     }
@@ -317,6 +368,7 @@ export default function SettingsPage({ onLogout, onProfileUpdated, user }) {
         ...current,
         [sangha.id]: { ...current[sangha.id], ...response.data },
       }));
+      setSanghaMessage("Sangha details were saved.");
     } catch (error) {
       setSanghaError(errorMessage(error));
     } finally {
@@ -422,7 +474,7 @@ export default function SettingsPage({ onLogout, onProfileUpdated, user }) {
                 <small>Phone changes are unavailable until verification is supported.</small>
               </label>
               <div className="settings-form__actions">
-                <button className="settings-button" type="submit" disabled={profileSaving || !profileName.trim()}>
+                <button className="settings-button" type="submit" disabled={profileSaving || profileLoading || !profileName.trim()}>
                   {profileSaving ? <LoaderCircle className="settings-spin" size={16} /> : <Save size={16} />}
                   Save profile
                 </button>
@@ -434,32 +486,35 @@ export default function SettingsPage({ onLogout, onProfileUpdated, user }) {
             id="settings-security"
             icon={KeyRound}
             title="Security"
-            description="Change your password to keep your account protected."
+            description="Change your password with your current password, or reset it if you forgot it."
           >
             <form className="settings-form settings-password-form" onSubmit={changePassword}>
               <label>
                 Current password
-                <input type="password" autoComplete="current-password" value={password.current_password} onChange={(event) => setPassword({ ...password, current_password: event.target.value })} required />
+                <input type="password" autoComplete="current-password" value={passwordForm.current_password} onChange={(event) => setPasswordForm({ ...passwordForm, current_password: event.target.value })} required />
               </label>
               <label>
                 New password
-                <input type="password" autoComplete="new-password" value={password.new_password} onChange={(event) => setPassword({ ...password, new_password: event.target.value })} minLength={8} required />
-                <small>Use at least 8 characters, including a lowercase letter, a number, and a special character.</small>
+                <input type="password" autoComplete="new-password" value={passwordForm.new_password} onChange={(event) => setPasswordForm({ ...passwordForm, new_password: event.target.value })} minLength={8} maxLength={128} required />
+                <small>At least 8 characters, including a lowercase letter, a number, and a special character.</small>
               </label>
               <label>
                 Confirm new password
-                <input type="password" autoComplete="new-password" value={password.confirm_password} onChange={(event) => setPassword({ ...password, confirm_password: event.target.value })} minLength={8} required />
+                <input type="password" autoComplete="new-password" value={passwordForm.confirm_password} onChange={(event) => setPasswordForm({ ...passwordForm, confirm_password: event.target.value })} minLength={8} maxLength={128} required />
               </label>
-              <div className="settings-form__actions">
+              <div className="settings-security-actions">
                 <button className="settings-button" type="submit" disabled={passwordSaving}>
-                  {passwordSaving ? <LoaderCircle className="settings-spin" size={16} /> : <KeyRound size={16} />}
-                  Change password
+                  {passwordSaving ? <LoaderCircle className="settings-spin" size={16} /> : <Save size={16} />}
+                  {passwordSaving ? "Updating password…" : "Change password"}
+                </button>
+                <button className="settings-forgot-password" type="button" onClick={openPasswordReset} disabled={profileLoading && !storedUser.phone}>
+                  Forgot password?
                 </button>
               </div>
             </form>
             <div className="settings-note">
               <ShieldCheck size={18} />
-              <p>Password changes take effect immediately. Signing out other devices is unavailable because this app does not track revocable sessions.</p>
+              <p>Password reset uses a two-minute development OTP alert for the registered phone; no SMS is sent. Signing out other devices is unavailable because this app does not track revocable sessions.</p>
             </div>
           </SettingsSection>
 
@@ -516,23 +571,23 @@ export default function SettingsPage({ onLogout, onProfileUpdated, user }) {
               <label>
                 Color theme
                 <span className="settings-select-wrap">
-                  <select value={appearance.theme} onChange={(event) => setAppearance({ ...appearance, theme: event.target.value })}>
+                  <select value={theme} onChange={(event) => updateAppearance("theme", event.target.value)}>
                     <option value="light">Light</option>
                     <option value="dark">Dark</option>
                   </select>
-                  {appearance.theme === "dark" ? <Moon size={16} /> : <Sun size={16} />}
+                  {theme === "dark" ? <Moon size={16} /> : <Sun size={16} />}
                 </span>
               </label>
               <label>
                 Display density
-                <select value={appearance.density} onChange={(event) => setAppearance({ ...appearance, density: event.target.value })}>
+                <select value={appearance.density} onChange={(event) => updateAppearance("density", event.target.value)}>
                   <option value="comfortable">Comfortable</option>
                   <option value="compact">Compact</option>
                 </select>
               </label>
               <label>
                 Date format
-                <select value={appearance.dateFormat} onChange={(event) => setAppearance({ ...appearance, dateFormat: event.target.value })}>
+                <select value={appearance.dateFormat} onChange={(event) => updateAppearance("dateFormat", event.target.value)}>
                   <option value="DD/MM/YYYY">DD/MM/YYYY</option>
                   <option value="MM/DD/YYYY">MM/DD/YYYY</option>
                   <option value="YYYY-MM-DD">YYYY-MM-DD</option>
@@ -572,6 +627,7 @@ export default function SettingsPage({ onLogout, onProfileUpdated, user }) {
             description={role === "member" ? "Your assigned Sangha details." : "Review or update Sangha details you are permitted to manage."}
           >
             {sanghaError && <p className="settings-inline-error" role="alert">{sanghaError}</p>}
+            {sanghaMessage && <p className="settings-inline-success" role="status">{sanghaMessage}</p>}
             {sanghas.length ? sanghas.map((sangha) => (
               <div className="settings-sangha" key={sangha.id}>
                 <div className="settings-sangha__title">
@@ -644,6 +700,14 @@ export default function SettingsPage({ onLogout, onProfileUpdated, user }) {
           </p>
         </div>
       </div>
+      {passwordResetOpen && (
+        <PasswordResetModal
+          phone={passwordResetPhone}
+          initialOtp={passwordResetOtp}
+          onClose={() => setPasswordResetOpen(false)}
+          onSuccess={(message) => setFormMessage(message)}
+        />
+      )}
     </div>
   );
 }

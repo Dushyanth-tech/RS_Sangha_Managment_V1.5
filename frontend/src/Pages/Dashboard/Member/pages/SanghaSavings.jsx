@@ -503,11 +503,229 @@ function FinancialPosition({ member, loading }) {
   );
 }
 
+/* ====================================================================
+   BANK BALANCE HISTORY  (date range + weekly graph)
+
+   All dates are the viewer's local calendar days. A "day key" is a plain
+   "YYYY-MM-DD" string, so keys compare correctly as text.
+==================================================================== */
+
+const pad2 = (n) => String(n).padStart(2, "0");
+
+const keyOf = (date) =>
+  `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+
+const toDayKey = (value) => {
+  if (!value) return null;
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : keyOf(date);
+};
+
+const dateFromKey = (key) => {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d);
+};
+
+const addDays = (key, days) => {
+  const date = dateFromKey(key);
+  date.setDate(date.getDate() + days);
+  return keyOf(date);
+};
+
+const addMonths = (key, months) => {
+  const date = dateFromKey(key);
+  date.setMonth(date.getMonth() + months);
+  return keyOf(date);
+};
+
+/** The Monday of the week that contains the given day (weeks run Monday to Sunday). */
+const mondayOf = (key) => addDays(key, -((dateFromKey(key).getDay() + 6) % 7));
+
+/** "10 Nov" style label for the chart axis. */
+const shortDay = (key) =>
+  dateFromKey(key).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+
+const formatAxisBalance = (value) => {
+  const n = Number(value);
+  if (Math.abs(n) >= 100000) return `₹${(n / 100000).toFixed(1).replace(/\.0$/, "")}L`;
+  if (Math.abs(n) >= 1000) return `₹${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+  return `₹${n}`;
+};
+
+/**
+ * Turns the recorded balances into one point per week.
+ *
+ * - A balance is recorded whenever it changes, so a week without a record means "no change":
+ *   that week carries the previous balance forward.
+ * - Each week reports the closing balance (last record of the week) plus the lowest and
+ *   highest balance held during it.
+ *
+ * `records` must be sorted oldest to newest and carry `day` (key) and `amount` (number).
+ */
+function buildWeekly(records, fromKey, toKey, todayKey) {
+  const endKey = toKey || todayKey;
+  const inRange = records.filter(
+    (r) => (!fromKey || r.day >= fromKey) && r.day <= endKey,
+  );
+
+  // The balance the member already had when the range starts
+  let carry = null;
+  if (fromKey) {
+    for (let i = records.length - 1; i >= 0; i -= 1) {
+      if (records[i].day < fromKey) {
+        carry = records[i].amount;
+        break;
+      }
+    }
+  }
+
+  const firstKey = fromKey || inRange[0]?.day;
+  if (!firstKey || (inRange.length === 0 && carry === null)) return [];
+
+  const weeks = [];
+  let cursor = mondayOf(firstKey);
+  const lastMonday = mondayOf(endKey);
+  let guard = 0;
+
+  while (cursor <= lastMonday && guard < 1000) {
+    const sunday = addDays(cursor, 6);
+    const inWeek = inRange.filter((r) => r.day >= cursor && r.day <= sunday);
+
+    if (inWeek.length > 0) {
+      const amounts = inWeek.map((r) => r.amount);
+      const open = carry;
+      const low = Math.min(...amounts, ...(open === null ? [] : [open]));
+      const high = Math.max(...amounts, ...(open === null ? [] : [open]));
+      const closing = inWeek[inWeek.length - 1].amount;
+      weeks.push({ start: cursor, end: sunday, closing, low, high, records: inWeek.length });
+      carry = closing;
+    } else if (carry !== null) {
+      weeks.push({ start: cursor, end: sunday, closing: carry, low: carry, high: carry, records: 0 });
+    }
+
+    cursor = addDays(cursor, 7);
+    guard += 1;
+  }
+
+  return weeks;
+}
+
+const BALANCE_PRESETS = [
+  { id: "30d", label: "Last 30 days", range: (today) => [addDays(today, -29), today] },
+  { id: "90d", label: "Last 90 days", range: (today) => [addDays(today, -89), today] },
+  { id: "6m", label: "Last 6 months", range: (today) => [addMonths(today, -6), today] },
+  { id: "1y", label: "Last year", range: (today) => [addMonths(today, -12), today] },
+  { id: "all", label: "All time", range: () => ["", ""] },
+];
+
+function WeekTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const week = payload[0].payload;
+
+  return (
+    <div className="ss-bh-tip">
+      <strong>
+        {formatAppDate(week.start)} – {formatAppDate(week.end)}
+      </strong>
+      <span>
+        Closing balance: <b>{rupees(week.closing)}</b>
+      </span>
+      <span>Lowest: {rupees(week.low)}</span>
+      <span>Highest: {rupees(week.high)}</span>
+      <small>
+        {week.records === 0
+          ? "No change this week"
+          : `${week.records} record${week.records === 1 ? "" : "s"} this week`}
+      </small>
+    </div>
+  );
+}
+
 function AvailableBalanceHistory({ items, loading, error, snapshotError, onRetry }) {
-  const chartItems = items.map((item) => ({
-    ...item,
-    chartBalance: Number(item.balance),
-  }));
+  const todayKey = keyOf(new Date());
+
+  // Date range: "YYYY-MM-DD" or "" (open ended). Starts on the last 90 days.
+  const [preset, setPreset] = useState("90d");
+  const [fromDate, setFromDate] = useState(() => BALANCE_PRESETS[1].range(todayKey)[0]);
+  const [toDate, setToDate] = useState(() => BALANCE_PRESETS[1].range(todayKey)[1]);
+
+  const applyPreset = (id) => {
+    const [from, to] = BALANCE_PRESETS.find((p) => p.id === id).range(todayKey);
+    setPreset(id);
+    setFromDate(from);
+    setToDate(to);
+  };
+
+  // keep the range valid even if a date is typed in by hand
+  const changeFrom = (value) => {
+    setPreset(null);
+    setFromDate(value);
+    if (value && toDate && value > toDate) setToDate(value);
+  };
+
+  const changeTo = (value) => {
+    setPreset(null);
+    setToDate(value);
+    if (value && fromDate && value < fromDate) setFromDate(value);
+  };
+
+  // Every record, oldest first, with its local calendar day and a numeric balance
+  const records = useMemo(
+    () =>
+      items
+        .map((item) => ({ ...item, day: toDayKey(item.recorded_at), amount: Number(item.balance) }))
+        .filter((item) => item.day),
+    [items],
+  );
+
+  // Records inside the chosen range (feeds the table)
+  const visible = useMemo(
+    () =>
+      records.filter(
+        (r) => (!fromDate || r.day >= fromDate) && (!toDate || r.day <= toDate),
+      ),
+    [records, fromDate, toDate],
+  );
+
+  // One point per week (feeds the graph)
+  const weekly = useMemo(
+    () =>
+      buildWeekly(records, fromDate, toDate, todayKey).map((w) => ({
+        ...w,
+        label: shortDay(w.start),
+      })),
+    [records, fromDate, toDate, todayKey],
+  );
+
+  const stats = useMemo(() => {
+    if (weekly.length === 0) return null;
+    const lowest = weekly.reduce((a, b) => (b.low < a.low ? b : a));
+    const highest = weekly.reduce((a, b) => (b.high > a.high ? b : a));
+    const average = weekly.reduce((sum, w) => sum + w.closing, 0) / weekly.length;
+    return {
+      lowest,
+      highest,
+      average,
+      change: weekly[weekly.length - 1].closing - weekly[0].closing,
+    };
+  }, [weekly]);
+
+  const rangeText =
+    fromDate && toDate
+      ? `${formatAppDate(fromDate)} to ${formatAppDate(toDate)}`
+      : fromDate
+        ? `${formatAppDate(fromDate)} till today`
+        : toDate
+          ? `up to ${formatAppDate(toDate)}`
+          : "all time";
+
+  const changeClass =
+    !stats || stats.change === 0
+      ? ""
+      : stats.change > 0
+        ? "ss-bh-stat__value--up"
+        : "ss-bh-stat__value--down";
 
   return (
     <Section
@@ -516,53 +734,133 @@ function AvailableBalanceHistory({ items, loading, error, snapshotError, onRetry
       subtitle="Your bank balance, updated whenever money is credited or debited"
     >
       {snapshotError && <ErrorBox text={snapshotError} onRetry={onRetry} />}
+
+      {/* ---------- Date range ---------- */}
+      <div className="ss-bh-filters" role="group" aria-label="Choose a date range">
+        <div className="ss-bh-dates">
+          <label className="ss-bh-field">
+            <span>From date</span>
+            <input
+              type="date"
+              value={fromDate}
+              max={toDate || todayKey}
+              onChange={(e) => changeFrom(e.target.value)}
+            />
+          </label>
+
+          <label className="ss-bh-field">
+            <span>To date</span>
+            <input
+              type="date"
+              value={toDate}
+              min={fromDate || undefined}
+              max={todayKey}
+              onChange={(e) => changeTo(e.target.value)}
+            />
+          </label>
+        </div>
+
+        <div className="ss-bh-presets" role="group" aria-label="Quick ranges">
+          {BALANCE_PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className={`ss-bh-chip ${preset === p.id ? "ss-bh-chip--active" : ""}`}
+              onClick={() => applyPreset(p.id)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {loading ? (
         <Skel h={100} />
       ) : error ? (
         <ErrorBox text={error} onRetry={onRetry} />
-      ) : items.length === 0 ? (
+      ) : records.length === 0 ? (
         <Empty icon={Wallet} text="No bank balance has been recorded yet." />
+      ) : weekly.length === 0 ? (
+        <Empty icon={Wallet} text={`No balance was recorded for ${rangeText}. Try a wider date range.`} />
       ) : (
         <>
-          {chartItems.length > 1 && (
+          {/* ---------- Summary for the chosen range ---------- */}
+          <dl className="ss-bh-stats">
+            <div className="ss-bh-stat">
+              <dt>Lowest balance</dt>
+              <dd>{rupees(stats.lowest.low)}</dd>
+              <small>week of {formatAppDate(stats.lowest.start)}</small>
+            </div>
+            <div className="ss-bh-stat">
+              <dt>Highest balance</dt>
+              <dd>{rupees(stats.highest.high)}</dd>
+              <small>week of {formatAppDate(stats.highest.start)}</small>
+            </div>
+            <div className="ss-bh-stat">
+              <dt>Average weekly balance</dt>
+              <dd>{rupees(stats.average)}</dd>
+              <small>
+                {weekly.length} week{weekly.length === 1 ? "" : "s"}
+              </small>
+            </div>
+            <div className="ss-bh-stat">
+              <dt>Change over this period</dt>
+              <dd className={changeClass}>
+                {stats.change > 0 ? "+" : stats.change < 0 ? "−" : ""}
+                {rupees(Math.abs(stats.change))}
+              </dd>
+              <small>first week to last week</small>
+            </div>
+          </dl>
+
+          {/* ---------- Weekly graph ---------- */}
+          <div className="ss-bh-chart-head">
+            <h3>Weekly balance</h3>
+            <p>
+              Closing balance of each week (Monday to Sunday), {rangeText}. A week with no change
+              keeps the previous balance.
+            </p>
+          </div>
+
+          {weekly.length > 1 ? (
             <div className="ss-balance-chart">
-              <ResponsiveContainer width="100%" height={240}>
+              <ResponsiveContainer width="100%" height={260}>
                 <LineChart
-                  data={chartItems}
+                  data={weekly}
                   margin={{ top: 12, right: 16, bottom: 8, left: 8 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis
-                    dataKey="recorded_at"
-                    tickFormatter={fmtDate}
-                  />
+                  <XAxis dataKey="label" minTickGap={24} tickMargin={6} />
                   <YAxis
-                    tickFormatter={(value) =>
-                      `₹${Number(value).toLocaleString("en-IN")}`
-                    }
-                    width={82}
+                    tickFormatter={formatAxisBalance}
+                    width={64}
+                    domain={["auto", "auto"]}
                   />
-                  <Tooltip
-                    labelFormatter={(value) =>
-                      formatAppDateTime(value)
-                    }
-                    formatter={(value) => [rupees(value), "Bank Balance"]}
-                  />
+                  <Tooltip content={<WeekTooltip />} />
                   <Line
                     type="linear"
-                    dataKey="chartBalance"
-                    name="Available balance"
+                    dataKey="closing"
+                    name="Closing balance"
                     stroke="#1a7a51"
                     strokeWidth={2}
-                    dot={{ r: 4 }}
+                    dot={weekly.length <= 40 ? { r: 4 } : false}
                     activeDot={{ r: 6 }}
                   />
                 </LineChart>
               </ResponsiveContainer>
             </div>
+          ) : (
+            <p className="ss-footnote">
+              Only one week of data falls in this range. Choose a wider range to see a trend.
+            </p>
           )}
+
+          {/* ---------- Records table ---------- */}
           <div className="ss-balance-history">
             <table>
+              <caption className="ss-bh-caption">
+                {visible.length} record{visible.length === 1 ? "" : "s"} · {rangeText}
+              </caption>
               <thead>
                 <tr>
                   <th scope="col">Recorded</th>
@@ -570,12 +868,20 @@ function AvailableBalanceHistory({ items, loading, error, snapshotError, onRetry
                 </tr>
               </thead>
               <tbody>
-                {items.map((item) => (
-                  <tr key={item.id}>
-                    <td>{fmtDate(item.recorded_at)}</td>
-                    <td>{rupees(item.balance)}</td>
+                {visible.length === 0 ? (
+                  <tr>
+                    <td colSpan={2} className="ss-bh-empty-row">
+                      No records were saved in this date range.
+                    </td>
                   </tr>
-                ))}
+                ) : (
+                  visible.map((item) => (
+                    <tr key={item.id}>
+                      <td>{fmtDate(item.recorded_at)}</td>
+                      <td>{rupees(item.balance)}</td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -1710,6 +2016,8 @@ export default function SanghaSavings({
   onNavigate,
   onOpenAccountStatus,
   onManageAccount,
+  openRequest = false,
+  onRequestOpened,
 }) {
   const storedUser = useMemo(
     () => userProp ?? JSON.parse(localStorage.getItem("user") || "{}"),
@@ -1734,6 +2042,13 @@ export default function SanghaSavings({
 
   const [showRequest, setShowRequest] = useState(false);
   const [reviewId, setReviewId] = useState(null);
+
+  useEffect(() => {
+    if (openRequest) {
+      setShowRequest(true);
+      onRequestOpened?.();
+    }
+  }, [openRequest, onRequestOpened]);
 
   // Frontend role is for layout only. The backend enforces every permission.
   const role = ov?.role ?? storedUser.role;
@@ -1789,7 +2104,7 @@ export default function SanghaSavings({
     if (memberView) {
       try {
         const response = await api.get("/me/available-balance/history", {
-          params: { days: 30 },
+          params: { days: 3650 },
         });
         setBalanceHistory(response.data);
       } catch (err) {

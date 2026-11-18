@@ -1110,3 +1110,61 @@ button.mp-cal__day:focus-visible {
     width: 230px;
   }
 }
+
+
+/* =========================================================
+   PAYMENT HISTORY: search + From / To date range
+   ========================================================= */
+
+.mp-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.mp-toolbar .mp-search-field {
+  flex: 1 1 240px;
+  max-width: none;
+  margin-bottom: 0;
+}
+
+.mp-dates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.mp-date-field {
+  width: 160px;
+}
+
+.mp-date-field input {
+  cursor: pointer;
+}
+
+.mp-dates__clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+}
+
+.mp-range-note {
+  margin: 0 0 12px;
+  color: var(--mp-muted);
+  font-size: 13px;
+}
+
+@media (max-width: 700px) {
+  .mp-dates {
+    width: 100%;
+  }
+
+  .mp-date-field {
+    flex: 1 1 140px;
+    width: auto;
+  }
+}

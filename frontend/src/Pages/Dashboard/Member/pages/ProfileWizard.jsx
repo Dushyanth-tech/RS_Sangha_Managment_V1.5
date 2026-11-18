@@ -71,6 +71,7 @@ export default function ProfileWizard({ onBack }) {
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
   const [editMode, setEditMode] = useState(false);
+  const [isVerified, setIsVerified] = useState(false);
 
   // --------------------------------------------------
   // LOAD PROFILE
@@ -86,6 +87,8 @@ export default function ProfileWizard({ onBack }) {
         const { profile, banking } = res.data;
 
         setExisting({ profile, banking });
+        setIsVerified(Boolean(profile?.is_verified));
+        if (profile?.is_verified) setEditMode(false);
         setEmail(profile?.email || "");
 
         setProfileForm({
@@ -401,6 +404,11 @@ if (profile?.has_id_proof_image) {
   // --------------------------------------------------
 
   const handleSave = async () => {
+    if (isVerified) {
+      setFormError("Verified account details cannot be edited.");
+      return;
+    }
+
     try {
       setSaving(true);
       setFormError("");
@@ -479,12 +487,14 @@ if (profile?.has_id_proof_image) {
 
         <button
           type="button"
-          className={`pw-edit-toggle ${
+          className={`pw-edit-toggle ${isVerified ? "pw-edit-toggle--disabled" : ""} ${
             editMode ? "pw-edit-toggle--active" : ""
           }`}
-          onClick={() => setEditMode((value) => !value)}
+          onClick={() => !isVerified && setEditMode((value) => !value)}
+          disabled={isVerified || loading}
+          title={isVerified ? "Your account is verified, so profile editing is disabled." : undefined}
         >
-          ✎ {editMode ? "Editing" : "Edit"}
+          ✎ {isVerified ? "Verified" : editMode ? "Editing" : "Edit"}
         </button>
       </div>
 
